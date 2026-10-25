@@ -440,6 +440,45 @@
     armClock();
   }
 
+  function missedStudyIds() {
+    if (!state.study) return [];
+    return state.study.ids.filter((id) => {
+      const memory = state.study.picks[id] || {};
+      return memory.picked !== byId.get(id).correct_option;
+    });
+  }
+
+  function missedResultIds() {
+    if (!state.result) return [];
+    return state.result.ids.filter((id, index) => byId.get(id).correct_option !== state.result.picked[index]);
+  }
+
+  function retryWrongIds(ids) {
+    const list = [];
+    ids.forEach((id) => {
+      if (!byId.has(id) || list.indexOf(id) !== -1) return;
+      list.push(id);
+      delete store.choices[id];
+    });
+    if (!list.length) return;
+    saveStore();
+    clearInterval(clockTimer);
+    state.view = "study";
+    state.query = "";
+    state.study = {
+      kind: "wrong",
+      extra: null,
+      title: "Làm lại các câu sai",
+      key: "wrong-retry",
+      ids: list,
+      index: 0,
+      picks: {},
+      graded: false,
+      summary: null,
+    };
+    render({ scroll: "top" });
+  }
+
   function resumeExam() {
     const saved = readExam();
     if (!saved || !LICENSES[saved.licenseId]) return;
@@ -676,10 +715,14 @@
         mid +
         '<button class="btn primary" data-act="next" ' + (state.study.index >= ids.length - 1 ? "disabled" : "") + '>Câu sau</button></div></article>';
     const pickedCount = state.study.ids.filter((qid) => (state.study.picks[qid] || {}).picked).length;
+    const missed = missedStudyIds();
+    const retryWrong = (state.study.kind === "wrong" || state.study.key === "wrong-retry" || graded) && missed.length
+      ? '<button class="btn" data-act="retry-wrong">Làm lại các câu sai</button>'
+      : "";
     const summary = state.study.summary
       ? '<div class="banner"><div><strong>Đúng ' + state.study.summary.correct + '/' + state.study.summary.total + '</strong>' +
         '<div class="meta">' + (state.study.summary.lietWrong ? "Có câu điểm liệt bị sai hoặc bỏ trống." : "Không sai câu điểm liệt.") + '</div></div>' +
-        '<button class="btn" data-act="retry-study">Làm lại</button></div>'
+        '<div class="row"><button class="btn" data-act="retry-study">Làm lại</button>' + retryWrong + '</div></div>'
       : "";
     const sideMeta = waiting
       ? pickedCount + "/" + state.study.ids.length + " đã chọn"
@@ -696,6 +739,7 @@
       '<span class="meta">' + (empty ? "0 câu" : (state.study.index + 1) + " / " + ids.length) + '</span>' +
       markModeSwitch() +
       (state.study.kind === "all" ? '<button class="btn" data-act="answers">Hiện toàn bộ đáp án</button>' : '') +
+      (state.study.summary ? "" : retryWrong) +
       '<input class="grow" type="search" data-act="search" placeholder="Tìm nội dung hoặc số câu" value="' + esc(state.query) + '">' +
       '<button class="btn" data-act="shuffle"' + (graded ? " disabled" : "") + '>Xáo trộn</button></div>' +
       keyTip() +
@@ -766,6 +810,7 @@
       '<p><strong>' + result.correct + '/' + result.count + '</strong> câu đúng. Mốc đạt là ' + result.pass + '/' + result.count + '.' + esc(reason) + '</p>' +
       '<div class="row"><button class="btn primary" data-act="retry-exam">Làm lại</button>' +
       '<button class="btn" data-act="start-exam" data-license="' + cfg.id + '">Làm đề mới</button>' +
+      (missedResultIds().length ? '<button class="btn" data-act="retry-wrong">Làm lại các câu sai</button>' : '') +
       '<button class="btn" data-act="study" data-kind="wrong">Ôn câu đang sai</button></div></section>' +
       '<div class="layout with-side">' + review +
       '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">Bấm số để xem câu</span><span class="meta">Dấu * là câu liệt</span></div><div class="dots">' + dots + '</div></aside></div></main>';
@@ -1117,6 +1162,11 @@
       return;
     }
     if (act === "retry-exam") { retryExam(); return; }
+    if (act === "retry-wrong") {
+      if (state.view === "result") retryWrongIds(missedResultIds());
+      else retryWrongIds(missedStudyIds());
+      return;
+    }
     if (act === "submit") { submitExam(false); return; }
     if (act === "mark-mode") {
       store.markMode = node.dataset.mode === "submit" ? "submit" : "instant";
