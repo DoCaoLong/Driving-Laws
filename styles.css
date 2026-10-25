@@ -349,6 +349,20 @@ body.fit .side > .btn { flex: none; }
   font-size: 12px;
   font-weight: 650;
 }
+.dots.keys { grid-auto-rows: 46px; }
+.dot.has-key {
+  height: 46px;
+  max-height: 46px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 1px;
+  line-height: 1;
+  padding: 3px 0 2px;
+}
+.dot-n { font-size: 12px; font-weight: 700; }
+.dot-k { font-size: 11px; font-weight: 750; color: var(--brand-dark); }
+.dot.has-key.liet::after { top: 0; right: 1px; font-size: 13px; }
 .dot.on { box-shadow: inset 0 0 0 2px var(--brand); background: var(--brand-soft); }
 .dot.done { background: var(--dot-done); }
 .dot.seen { background: var(--dot-seen); }

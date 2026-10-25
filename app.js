@@ -644,6 +644,10 @@
     render({ scroll: "top" });
   }
 
+  function optionLetter(option) {
+    return "ABCD".charAt(option - 1) || String(option);
+  }
+
   function answerIds() {
     const ids = state.answers.ids;
     const query = state.query.trim().toLowerCase();
@@ -673,8 +677,10 @@
         '<div class="explain">' + esc(question.explanation || "Không có giải thích thêm.") + '</div></details></article>';
     }).join("");
     const dots = ids.map((id) => {
-      const liet = byId.get(id).is_critical ? " liet" : "";
-      return '<button class="dot' + liet + '" data-act="goto-answer" data-id="' + id + '" title="Câu ' + id + '">' + id + '</button>';
+      const question = byId.get(id);
+      const liet = question.is_critical ? " liet" : "";
+      const letter = optionLetter(question.correct_option);
+      return '<button class="dot has-key' + liet + '" data-act="goto-answer" data-id="' + id + '" title="Câu ' + id + ' · Đáp án ' + letter + '"><span class="dot-n">' + id + '</span><span class="dot-k">' + letter + '</span></button>';
     }).join("");
     const sheet = ids.length
       ? '<div class="sheet">' + cards + '</div>'
@@ -683,8 +689,8 @@
       '<span class="meta">' + ids.length + ' câu</span>' +
       '<input class="grow" type="search" data-act="search" placeholder="Tìm nội dung hoặc số câu" value="' + esc(state.query) + '"></div>' +
       '<div class="layout with-side"><div class="sheet-wrap">' + sheet + '</div>' +
-      '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">Dấu * là câu liệt</span></div>' +
-      '<div class="dots">' + dots + '</div></aside></div></main>';
+      '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">Chữ dưới số là đáp án</span><span class="meta">Dấu * là câu liệt</span></div>' +
+      '<div class="dots keys">' + dots + '</div></aside></div></main>';
   }
 
   function render(options) {
