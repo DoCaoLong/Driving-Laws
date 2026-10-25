@@ -297,6 +297,27 @@
     armClock();
   }
 
+  function retryExam() {
+    const result = state.result;
+    if (!result || !LICENSES[result.licenseId] || !result.ids || !result.ids.length) return;
+    const cfg = LICENSES[result.licenseId];
+    const ids = result.ids.slice();
+    const exam = {
+      licenseId: result.licenseId,
+      ids,
+      picked: ids.map(() => null),
+      revealed: ids.map(() => false),
+      index: 0,
+      endsAt: Date.now() + cfg.minutes * 60 * 1000,
+    };
+    state.exam = exam;
+    state.result = null;
+    state.view = "exam";
+    writeExam(exam);
+    render({ scroll: "top" });
+    armClock();
+  }
+
   function resumeExam() {
     const saved = readExam();
     if (!saved || !LICENSES[saved.licenseId]) return;
@@ -325,7 +346,11 @@
       else delete store.wrong[id];
     });
     saveStore();
-    state.result = Object.assign({ licenseId: state.exam.licenseId, ids: state.exam.ids, picked: state.exam.picked }, result);
+    state.result = Object.assign({
+      licenseId: state.exam.licenseId,
+      ids: state.exam.ids.slice(),
+      picked: state.exam.picked.slice(),
+    }, result, { index: null });
     state.view = "result";
     state.exam = null;
     writeExam(null);
@@ -354,10 +379,20 @@
 
   function themeIcon(dark) {
     if (dark) {
-      return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
-        '<path d="M12 2.6v2.1M12 19.3v2.1M2.6 12h2.1M19.3 12h2.1M5.1 5.1l1.5 1.5M17.4 17.4l1.5 1.5M18.9 5.1l-1.5 1.5M6.6 17.4 5.1 18.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+      return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+        '<circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5"/>' +
+        '<path d="M12 2.4v3.2M12 18.4v3.2M2.4 12h3.2M18.4 12h3.2M5.2 5.2l2.3 2.3M16.5 16.5l2.3 2.3M18.8 5.2l-2.3 2.3M7.5 16.5l-2.3 2.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+        "</svg>";
     }
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.8 14.6A6.2 6.2 0 0 1 9.4 6.4 6.4 6.4 0 1 0 15.8 14.6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+    return '<svg width="64px" height="64px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M12 22C17.5228 22 22 17.5228 22 12C22 11.5373 21.3065 11.4608 21.0672 11.8568C19.9289 13.7406 17.8615 15 15.5 15C11.9101 15 9 12.0899 9 8.5C9 6.13845 10.2594 4.07105 12.1432 2.93276C12.5392 2.69347 12.4627 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" fill="#1C274C"></path> </g></svg>';
+  }
+
+  
+
+  function saveIcon(on) {
+    const shape = "M8 3.5h8a1 1 0 0 1 1 1V20.5l-5-2.8-5 2.8V4.5a1 1 0 0 1 1-1z";
+    if (on) return '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="' + shape + '"/></svg>';
+    return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="' + shape + '" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
   }
 
   function header() {
@@ -464,11 +499,11 @@
     const explain = revealed
       ? '<div class="explain"><b>Đáp án ' + question.correct_option + '</b>' + esc(question.explanation || "Không có giải thích thêm.") + '</div>'
       : "";
+    const saved = store.saved.has(question.id);
     const badges = '<span class="pill">Câu ' + question.id + '</span>' +
-      (lietVisible && question.is_critical ? '<span class="pill liet">Điểm liệt</span>' : '') +
-      (store.saved.has(question.id) ? '<span class="pill">Đã lưu</span>' : '');
+      (lietVisible && question.is_critical ? '<span class="pill liet">Điểm liệt</span>' : '');
     return '<div class="qhead"><div class="row">' + badges + '</div>' +
-      '<button class="btn" data-act="toggle-save" data-id="' + question.id + '">' + (store.saved.has(question.id) ? "Bỏ lưu" : "Lưu câu") + '</button></div>' +
+      '<button class="btn icon-btn save-btn' + (saved ? " on" : "") + '" data-act="toggle-save" data-id="' + question.id + '" aria-label="' + (saved ? "Bỏ lưu" : "Lưu câu") + '" title="' + (saved ? "Bỏ lưu" : "Lưu câu") + '">' + saveIcon(saved) + '</button></div>' +
       '<p class="qtext">' + esc(question.question) + '</p>' + figure +
       '<div class="options">' + options + '</div>' + explain;
   }
@@ -528,6 +563,7 @@
       (state.study.kind === "all" ? '<button class="btn" data-act="answers">Hiện toàn bộ đáp án</button>' : '') +
       '<input class="grow" type="search" data-act="search" placeholder="Tìm nội dung hoặc số câu" value="' + esc(state.query) + '">' +
       '<button class="btn" data-act="shuffle"' + (graded ? " disabled" : "") + '>Xáo trộn</button></div>' +
+      keyTip() +
       summary +
       '<div class="layout with-side">' + card + side + '</div></main>';
   }
@@ -552,6 +588,7 @@
     const blank = exam.picked.filter((value) => !value).length;
     return header() + '<main class="wrap main"><div class="row toolbar"><strong>' + esc(cfg.name) + '</strong>' +
       '<span class="meta">Câu ' + (exam.index + 1) + '/' + cfg.count + '</span>' + markModeSwitch() + '</div>' +
+      keyTip() +
       '<div class="layout with-side"><article class="qcard' + (lietHere ? " liet" : "") + '">' +
       questionBody(question, exam.picked[exam.index], revealedHere, lietHere) +
       '<div class="nav"><button class="btn" data-act="prev" ' + (exam.index === 0 ? "disabled" : "") + '>Trước</button>' +
@@ -560,7 +597,7 @@
       '<div class="meta">Đạt ' + cfg.pass + '/' + cfg.count + ', không sai câu liệt</div>' +
       (submitMode() ? '<span class="meta">Dấu * hiện sau khi nộp</span>' : '<span class="meta">Dấu * hiện sau khi chấm câu đó</span>') +
       '</div><div class="dots">' + dots + '</div>' +
-      '<button class="btn warn" data-act="submit">Nộp bài' + (blank ? " (" + blank + " trống)" : "") + '</button></aside></div></main>';
+      '<button class="btn primary" data-act="submit">Nộp bài' + (blank ? " (" + blank + " trống)" : "") + '</button></aside></div></main>';
   }
 
   function resultHtml() {
@@ -569,27 +606,34 @@
     const headline = result.passed ? "ĐẠT" : "KHÔNG ĐẠT";
     const reason = result.lietWrong ? " Sai câu điểm liệt." : "";
     const liet = lietSet(cfg);
-    const cards = result.ids.map((id, index) => {
+    const selected = Number.isInteger(result.index) ? result.index : -1;
+    let review = '<article class="qcard review-empty"><p>Chọn một số câu để xem lại.</p></article>';
+    if (selected >= 0 && selected < result.ids.length) {
+      const id = result.ids[selected];
       const question = byId.get(id);
-      const answer = result.picked[index];
+      const answer = result.picked[selected];
       const good = answer === question.correct_option;
       const isLiet = liet.has(id);
-      return '<article class="qcard' + (isLiet ? " liet" : "") + '" id="review-' + index + '"><div class="row"><span class="pill ' + (good ? "ok" : "bad") + '">' +
-        (good ? "Đúng" : "Sai") + '</span><span class="meta">Câu ' + (index + 1) + ' trong đề</span></div>' +
+      review = '<article class="qcard' + (isLiet ? " liet" : "") + '" id="review-' + selected + '"><div class="row"><span class="pill ' + (good ? "ok" : "bad") + '">' +
+        (good ? "Đúng" : "Sai") + '</span><span class="meta">Câu ' + (selected + 1) + ' trong đề</span></div>' +
         questionBody(question, answer, true, isLiet) + '</article>';
-    }).join("");
+    }
     const dots = result.ids.map((id, index) => {
       const question = byId.get(id);
       const good = result.picked[index] === question.correct_option;
       const isLiet = liet.has(id);
-      return '<button class="dot ' + (good ? "correct" : "wrong") + (isLiet ? " liet" : "") + '" data-act="goto-review" data-i="' + index + '">' + (index + 1) + '</button>';
+      let cls = "dot " + (good ? "correct" : "wrong");
+      if (isLiet) cls += " liet";
+      if (index === selected) cls += " on";
+      return '<button class="' + cls + '" data-act="goto-review" data-i="' + index + '" title="Câu ' + (index + 1) + ' trong đề">' + (index + 1) + '</button>';
     }).join("");
-    return header() + '<main class="wrap main"><div class="layout with-side"><div><section class="qcard"><p class="score ' + (result.passed ? "pass" : "fail") + '">' + headline + '</p>' +
+    return header() + '<main class="wrap main"><section class="qcard score-card"><p class="score ' + (result.passed ? "pass" : "fail") + '">' + headline + '</p>' +
       '<p><strong>' + result.correct + '/' + result.count + '</strong> câu đúng. Mốc đạt là ' + result.pass + '/' + result.count + '.' + esc(reason) + '</p>' +
-      '<div class="row"><button class="btn primary" data-act="start-exam" data-license="' + cfg.id + '">Làm đề mới</button>' +
+      '<div class="row"><button class="btn primary" data-act="retry-exam">Làm lại</button>' +
+      '<button class="btn" data-act="start-exam" data-license="' + cfg.id + '">Làm đề mới</button>' +
       '<button class="btn" data-act="study" data-kind="wrong">Ôn câu đang sai</button></div></section>' +
-      '<h2>Xem lại</h2><div class="grid">' + cards + '</div></div>' +
-      '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">Xem lại đề</span><span class="meta">Dấu * là câu liệt</span></div><div class="dots">' + dots + '</div></aside></div></main>';
+      '<div class="layout with-side">' + review +
+      '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">Bấm số để xem câu</span><span class="meta">Dấu * là câu liệt</span></div><div class="dots">' + dots + '</div></aside></div></main>';
   }
 
   function openAnswers() {
@@ -843,13 +887,12 @@
       if (card) card.scrollIntoView({ block: "start" });
       return;
     }
-    if (act === "goto-review") {
-      const card = document.getElementById("review-" + node.dataset.i);
-      document.querySelectorAll(".dot.on").forEach((el) => el.classList.remove("on"));
-      node.classList.add("on");
-      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (act === "goto-review" && state.result) {
+      state.result.index = Number(node.dataset.i);
+      render({ scroll: "keep" });
       return;
     }
+    if (act === "retry-exam") { retryExam(); return; }
     if (act === "submit") { submitExam(false); return; }
     if (act === "mark-mode") {
       store.markMode = node.dataset.mode === "submit" ? "submit" : "instant";
@@ -906,12 +949,23 @@
     }
   }
 
+  function keyTip() {
+    return '<p class="key-tip">Mẹo: <kbd>←</kbd> <kbd>→</kbd> chuyển câu, <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> chọn đáp án</p>';
+  }
+
   function onKey(event) {
     if (event.target.matches("input, textarea")) return;
     if (state.view !== "study" && state.view !== "exam") return;
-    if (event.key >= "1" && event.key <= "4") choose(Number(event.key));
-    if (event.key === "ArrowRight") move(1);
-    if (event.key === "ArrowLeft") move(-1);
+    if (event.key >= "1" && event.key <= "4") {
+      event.preventDefault();
+      choose(Number(event.key));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      move(1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      move(-1);
+    }
   }
 
   function boot() {

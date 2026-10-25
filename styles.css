@@ -86,8 +86,22 @@ img { max-width: 100%; height: auto; }
 }
 .nav-links { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .nav-links .btn.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-dark); }
-.icon-btn { width: 36px; height: 36px; padding: 0; display: grid; place-items: center; }
-.icon-btn svg { width: 18px; height: 18px; display: block; }
+.icon-btn { position: relative; width: 36px; height: 36px; padding: 0; color: var(--ink); }
+.icon-btn svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  display: block;
+  transform: translate(-50%, -50%);
+}
+.nav-links .icon-btn { width: auto; height: auto; }
+.nav-links .icon-btn svg { position: static; transform: none; width: 1.5em; height: 1.5em; }
+.nav-links .icon-btn:hover { background: var(--brand-soft); }
+.save-btn { flex: none; border-color: transparent; background: transparent; color: var(--muted); }
+.save-btn:hover { background: var(--brand-soft); color: var(--ink); }
+.save-btn.on { color: var(--ink); }
 .logo { width: 36px; height: 36px; border-radius: 10px; display: block; }
 .brand {
   display: flex;
@@ -151,7 +165,23 @@ h2 { font-size: 16px; margin: 22px 0 10px; }
   margin-bottom: 14px;
 }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.toolbar { margin-bottom: 12px; }
+.toolbar { margin-bottom: 8px; }
+.key-tip { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.key-tip kbd {
+  display: inline-block;
+  min-width: 1.35em;
+  padding: 0 5px;
+  margin: 0 1px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
+}
 .grow { flex: 1; min-width: 180px; }
 
 input[type="search"], input[type="number"], select {
@@ -183,7 +213,7 @@ input[type="search"], input[type="number"], select {
 }
 .qcard { position: relative; padding: 16px; }
 .qcard.liet .qhead { padding-right: 28px; }
-.qhead { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.qhead { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .qtext { font-size: 18px; margin: 10px 0 12px; }
 .figure {
   display: block;
@@ -261,6 +291,7 @@ body.fit .main {
   overflow: hidden;
 }
 body.fit .toolbar,
+body.fit .key-tip,
 body.fit .banner { flex: none; }
 body.fit .layout.with-side {
   flex: 1;
@@ -342,6 +373,11 @@ body.fit .side > .btn { flex: none; }
 .stat.liet span { color: var(--bad); }
 
 .score { font-size: 42px; margin: 0; line-height: 1; }
+.score-card { margin-bottom: 10px; }
+.score-card p { margin: 8px 0; }
+.review-empty { color: var(--muted); }
+.review-empty p { margin: 0; }
+body.fit .score-card { flex: none; }
 .pass { color: var(--ok); }
 .fail { color: var(--bad); }
 .footer-note { color: var(--muted); font-size: 13px; margin: 18px 0 0; text-align: center; }
