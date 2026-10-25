@@ -36,6 +36,9 @@
 
   const STORE_KEY = "gplx600-v1";
   const EXAM_KEY = "gplx600-exam";
+  const STUDY_KEY = "gplx600-study";
+  const VIEW_KEY = "gplx600-view";
+  const RESULT_KEY = "gplx600-result";
 
   const QUESTIONS = (typeof globalThis.QUESTION_BANK !== "undefined" ? globalThis.QUESTION_BANK : []);
   // Phụ lục III Công văn 2262/CSGT-P5. Cờ trong file dữ liệu gốc không khớp phụ lục này.
@@ -86,22 +89,55 @@
       const raw = JSON.parse(local.getItem(STORE_KEY) || "{}");
       return {
         wrong: raw.wrong && typeof raw.wrong === "object" ? raw.wrong : {},
+        practiced: sanitizePracticed(raw.practiced),
+        choices: sanitizeChoices(raw.choices),
         saved: new Set(Array.isArray(raw.saved) ? raw.saved : []),
         markMode: raw.markMode === "submit" ? "submit" : "instant",
         theme: raw.theme === "dark" ? "dark" : "light",
       };
     } catch (err) {
-      return { wrong: {}, saved: new Set(), markMode: "instant", theme: "light" };
+      return { wrong: {}, practiced: {}, choices: {}, saved: new Set(), markMode: "instant", theme: "light" };
     }
   }
 
   function saveStore() {
     local.setItem(STORE_KEY, JSON.stringify({
       wrong: store.wrong,
+      practiced: store.practiced,
+      choices: store.choices,
       saved: [...store.saved],
       markMode: store.markMode === "submit" ? "submit" : "instant",
       theme: store.theme === "dark" ? "dark" : "light",
     }));
+  }
+
+  function sanitizePracticed(raw) {
+    const out = {};
+    if (!raw || typeof raw !== "object") return out;
+    Object.keys(raw).forEach((key) => {
+      const id = Number(key);
+      const picked = Number(raw[key]);
+      if (!byId.has(id)) return;
+      if (picked === 0 || (picked >= 1 && picked <= 4)) out[id] = picked;
+    });
+    return out;
+  }
+
+  function sanitizeChoices(raw) {
+    const out = {};
+    if (!raw || typeof raw !== "object") return out;
+    Object.keys(raw).forEach((key) => {
+      const id = Number(key);
+      const item = raw[key] || {};
+      const picked = Number(item.picked);
+      if (!byId.has(id)) return;
+      out[id] = {
+        picked: picked >= 1 && picked <= 4 ? picked : null,
+        revealed: !!item.revealed,
+        counted: !!item.counted,
+      };
+    });
+    return out;
   }
 
   function applyTheme() {
@@ -114,14 +150,74 @@
   }
 
   function readExam() {
-    try { return JSON.parse(session.getItem(EXAM_KEY) || "null"); }
-    catch (err) { return null; }
+    try {
+      const raw = local.getItem(EXAM_KEY) || session.getItem(EXAM_KEY);
+      return JSON.parse(raw || "null");
+    } catch (err) { return null; }
   }
 
   function writeExam(exam) {
-    if (!exam) session.removeItem(EXAM_KEY);
-    else session.setItem(EXAM_KEY, JSON.stringify(exam));
+    session.removeItem(EXAM_KEY);
+    if (!exam) local.removeItem(EXAM_KEY);
+    else local.setItem(EXAM_KEY, JSON.stringify(exam));
     state.resume = exam;
+  }
+
+  function studyKey(kind, extra) {
+    return kind === "chapter" ? "chapter:" + extra : kind;
+  }
+
+  function choiceOf(raw) {
+    const picked = Number(raw && raw.picked);
+    return {
+      picked: picked >= 1 && picked <= 4 ? picked : null,
+      revealed: !!(raw && raw.revealed),
+      counted: !!(raw && raw.counted),
+    };
+  }
+
+  function readStudy() {
+    try {
+      const saved = JSON.parse(local.getItem(STUDY_KEY) || "null");
+      if (!saved || !Array.isArray(saved.ids)) return null;
+      const ids = saved.ids.map(Number).filter((id) => byId.has(id));
+      if (!ids.length) return null;
+      const picks = {};
+      Object.keys(saved.picks || {}).forEach((key) => {
+        const id = Number(key);
+        if (ids.includes(id)) picks[id] = choiceOf(saved.picks[key]);
+      });
+      let index = Number(saved.index) || 0;
+      if (index < 0 || index >= ids.length) index = 0;
+      return {
+        kind: saved.kind,
+        extra: saved.extra == null ? null : Number(saved.extra),
+        title: String(saved.title || ""),
+        key: saved.key || studyKey(saved.kind, saved.extra),
+        ids: ids,
+        index: index,
+        picks: picks,
+        graded: !!saved.graded,
+        summary: saved.summary || null,
+        query: typeof saved.query === "string" ? saved.query : "",
+      };
+    } catch (err) { return null; }
+  }
+
+  function writeStudy() {
+    if (!state.study) return;
+    local.setItem(STUDY_KEY, JSON.stringify({
+      kind: state.study.kind,
+      extra: state.study.extra,
+      title: state.study.title,
+      key: state.study.key || studyKey(state.study.kind, state.study.extra),
+      ids: state.study.ids,
+      index: state.study.index,
+      picks: state.study.picks,
+      graded: !!state.study.graded,
+      summary: state.study.summary || null,
+      query: state.query || "",
+    }));
   }
 
   function esc(value) {
@@ -259,12 +355,38 @@
     return [];
   }
 
+  function picksFor(ids) {
+    const picks = {};
+    ids.forEach((id) => {
+      if (store.choices[id]) picks[id] = choiceOf(store.choices[id]);
+    });
+    return picks;
+  }
+
   function openStudy(kind, extra, title) {
     clearInterval(clockTimer);
-    const ids = studyIds(kind, extra);
+    const fresh = studyIds(kind, extra);
+    const saved = readStudy();
+    const key = studyKey(kind, extra);
+    const same = saved && saved.key === key;
+    let ids = fresh;
+    if (same && saved.ids.length === fresh.length && saved.ids.every((id) => fresh.includes(id))) ids = saved.ids.slice();
+    const picks = picksFor(ids);
+    let index = 0;
+    if (same && saved.index >= 0 && saved.index < ids.length) index = saved.index;
     state.view = "study";
-    state.query = "";
-    state.study = { kind, extra: extra || null, title, ids, index: 0, picks: {} };
+    state.query = same ? saved.query : "";
+    state.study = {
+      kind: kind,
+      extra: extra || null,
+      title: title,
+      key: key,
+      ids: ids,
+      index: index,
+      picks: picks,
+      graded: !!(same && saved.graded),
+      summary: same && saved.summary ? saved.summary : null,
+    };
     render({ scroll: "top" });
   }
 
@@ -331,20 +453,15 @@
     }
   }
 
-  function submitExam(auto) {
+  async function submitExam(auto) {
     if (!state.exam) return;
     if (!auto) {
       const blank = state.exam.picked.filter((value) => !value).length;
       const note = blank ? " Còn " + blank + " câu chưa chọn." : "";
-      if (!window.confirm("Nộp bài?" + note)) return;
+      if (!await askConfirm("Nộp bài?" + note, "Nộp bài")) return;
     }
     const result = grade(state.exam.licenseId, state.exam.ids, state.exam.picked);
-    state.exam.ids.forEach((id, index) => {
-      const question = byId.get(id);
-      const answer = state.exam.picked[index];
-      if (!answer || answer !== question.correct_option) store.wrong[id] = (store.wrong[id] || 0) + 1;
-      else delete store.wrong[id];
-    });
+    state.exam.ids.forEach((id, index) => rememberExamAnswer(index));
     saveStore();
     state.result = Object.assign({
       licenseId: state.exam.licenseId,
@@ -432,8 +549,9 @@
         '<button class="btn" data-act="discard-exam">Bỏ bài</button></div></div>'
       : "";
     return header() + '<main class="wrap main"><div class="dash">' +
-      '<div class="dash-head"><h1>Tổng quan</h1>' +
+      '<div class="dash-head"><div><h1>Tổng quan</h1>' +
       '<p class="lead">Bộ 600 câu Cục CSGT. Hạng ô tô sai 1 trong 60 câu liệt là trượt. Hạng A1 và A chỉ tính 20 câu liệt.</p></div>' +
+      '<button class="btn warn" data-act="reset-all">Xóa dữ liệu</button></div>' +
       '<div class="statgrid">' +
       statButton("all", String(QUESTIONS.length), "Câu hỏi", "") +
       statButton("image", String(imageCount), "Câu có hình", "") +
@@ -508,18 +626,33 @@
       '<div class="options">' + options + '</div>' + explain;
   }
 
+  function studyMemory(id) {
+    const live = (state.study && state.study.picks[id]) || {};
+    if (live.picked || live.revealed) return live;
+    if (!state.study || state.study.kind !== "all") return live;
+    if (!Object.prototype.hasOwnProperty.call(store.practiced, id)) return live;
+    const picked = Number(store.practiced[id]) || null;
+    return { picked: picked, revealed: true, counted: true, saved: true };
+  }
+
   function studyDots(ids) {
     return ids.map((id, index) => {
       const question = byId.get(id);
-      const memory = state.study.picks[id] || {};
+      const memory = studyMemory(id);
       let cls = "dot";
+      let title = "Câu " + id;
       if (index === state.study.index) cls += " on";
-      if (memory.revealed && memory.picked) cls += memory.picked === question.correct_option ? " correct" : " wrong";
-      else if (memory.revealed && state.study.graded) cls += " wrong";
-      else if (memory.revealed) cls += " seen";
+      if (memory.revealed && memory.picked) {
+        const good = memory.picked === question.correct_option;
+        cls += good ? " correct" : " wrong";
+        title += good ? " · Đúng" : " · Sai";
+      } else if (memory.revealed && (state.study.graded || memory.saved)) {
+        cls += " wrong";
+        title += " · Sai";
+      } else if (memory.revealed) cls += " seen";
       else if (memory.picked) cls += " done";
       if (studyLiet(question)) cls += " liet";
-      return '<button class="' + cls + '" data-act="goto" data-i="' + index + '" title="Câu ' + id + '">' + id + '</button>';
+      return '<button class="' + cls + '" data-act="goto" data-i="' + index + '" title="' + title + '">' + id + '</button>';
     }).join("");
   }
 
@@ -529,7 +662,7 @@
     const empty = ids.length === 0;
     const id = ids[state.study.index];
     const question = id ? byId.get(id) : null;
-    const memory = question ? (state.study.picks[question.id] || {}) : {};
+    const memory = question ? studyMemory(question.id) : {};
     const liet = question ? studyLiet(question) : false;
     const graded = !!state.study.graded;
     const waiting = submitMode() && !graded;
@@ -551,7 +684,9 @@
     const sideMeta = waiting
       ? pickedCount + "/" + state.study.ids.length + " đã chọn"
       : ids.length + " câu";
+    const hasPractice = state.study.kind === "all" && state.study.ids.some((qid) => Object.prototype.hasOwnProperty.call(store.practiced, qid));
     const side = '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">' + sideMeta + '</span>' +
+      (hasPractice ? '<span class="meta">Xanh là đúng, đỏ là sai</span>' : '') +
       '<span class="meta">Dấu * là câu liệt</span></div>' +
       '<div class="dots">' + studyDots(ids) + '</div>' +
       (waiting && !empty ? '<button class="btn primary" data-act="grade-study">Chấm bài</button>' : "") +
@@ -663,16 +798,20 @@
     const ids = answerIds();
     const cards = ids.map((id) => {
       const question = byId.get(id);
-      const answer = question.options[question.correct_option - 1] || "";
       const liet = question.is_critical;
       const figure = question.image
         ? '<img class="figure" loading="lazy" data-act="zoom" src="' + esc(question.image) + '" alt="Hình câu ' + id + '">'
         : "";
+      const choices = question.options.map((text, index) => {
+        const number = index + 1;
+        const correct = number === question.correct_option;
+        return '<div class="opt' + (correct ? " correct" : "") + '"><span class="n">' + optionLetter(number) + '</span><span>' + esc(text) + '</span></div>';
+      }).join("");
       return '<article class="akey' + (liet ? " liet" : "") + '" id="answer-' + id + '">' +
         '<div class="row"><span class="pill">Câu ' + id + '</span>' +
         (liet ? '<span class="pill liet">Điểm liệt</span>' : '') + '</div>' +
         '<p class="qtext">' + esc(question.question) + '</p>' +
-        '<p class="akey-ok">Đáp án ' + question.correct_option + '. ' + esc(answer) + '</p>' +
+        '<div class="options">' + choices + '</div>' +
         '<details><summary>Giải thích</summary>' + figure +
         '<div class="explain">' + esc(question.explanation || "Không có giải thích thêm.") + '</div></details></article>';
     }).join("");
@@ -710,9 +849,55 @@
     else if (options && options.scroll === "keep") window.scrollTo(0, keep);
     const search = app.querySelector('[data-act="search"]');
     if (search && document.activeElement !== search && state.query) search.focus();
-    const box = app.querySelector(".dots");
+    scrollCurrentDot();
+    local.setItem(VIEW_KEY, state.view);
+    if (state.view === "study") writeStudy();
+    if (state.view === "result" && state.result) local.setItem(RESULT_KEY, JSON.stringify(state.result));
+  }
+
+  function scrollCurrentDot() {
+    const box = document.querySelector(".dots");
     const current = box && box.querySelector(".dot.on");
-    if (current) box.scrollTop = Math.max(0, current.offsetTop - (box.clientHeight - current.offsetHeight) / 2);
+    if (!current) return;
+    if (window.matchMedia("(max-width: 799px)").matches) {
+      box.scrollLeft = Math.max(0, current.offsetLeft - (box.clientWidth - current.offsetWidth) / 2);
+    } else {
+      box.scrollTop = Math.max(0, current.offsetTop - (box.clientHeight - current.offsetHeight) / 2);
+    }
+  }
+
+  function askConfirm(message, accept) {
+    const dialog = document.getElementById("confirm");
+    dialog.querySelector("p").textContent = message;
+    dialog.querySelector('[value="yes"]').textContent = accept || "Đồng ý";
+    return new Promise((resolve) => {
+      const finish = () => {
+        dialog.removeEventListener("close", finish);
+        resolve(dialog.returnValue === "yes");
+      };
+      dialog.addEventListener("close", finish);
+      dialog.showModal();
+    });
+  }
+
+  async function resetData() {
+    const ok = await askConfirm("Xóa toàn bộ dữ liệu đã lưu trên máy này? Câu đã làm, câu đã lưu và bài thi dở sẽ mất.", "Xóa");
+    if (!ok) return;
+    store.wrong = {};
+    store.practiced = {};
+    store.choices = {};
+    store.saved = new Set();
+    saveStore();
+    clearInterval(clockTimer);
+    state.study = null;
+    state.exam = null;
+    state.result = null;
+    state.query = "";
+    state.view = "home";
+    writeExam(null);
+    local.removeItem(STUDY_KEY);
+    local.removeItem(RESULT_KEY);
+    render({ scroll: "top" });
   }
 
   function currentQuestion() {
@@ -724,12 +909,37 @@
     return null;
   }
 
+  function rememberChoice(id, memory) {
+    store.choices[id] = choiceOf(memory);
+    saveStore();
+  }
+
   function rememberStudy(question, patch) {
     const prev = state.study.picks[question.id] || {};
-    state.study.picks[question.id] = Object.assign({}, prev, patch);
+    const next = Object.assign({}, prev, patch);
+    state.study.picks[question.id] = next;
+    rememberChoice(question.id, next);
+  }
+
+  function rememberExamAnswer(index) {
+    const exam = state.exam;
+    if (!exam) return;
+    if (!Array.isArray(exam.logged)) exam.logged = exam.ids.map(() => false);
+    if (exam.logged[index]) return;
+    const id = exam.ids[index];
+    const question = byId.get(id);
+    if (!question) return;
+    const answer = exam.picked[index] || 0;
+    exam.logged[index] = true;
+    store.practiced[id] = answer;
+    if (!answer || answer !== question.correct_option) store.wrong[id] = (store.wrong[id] || 0) + 1;
+    else delete store.wrong[id];
   }
 
   function recordAnswer(question, answer) {
+    if (answer && state.view === "study" && state.study && state.study.kind === "all") {
+      store.practiced[question.id] = answer;
+    }
     if (answer === question.correct_option) delete store.wrong[question.id];
     else store.wrong[question.id] = (store.wrong[question.id] || 0) + 1;
   }
@@ -744,6 +954,8 @@
       if (!submitMode()) {
         if (!Array.isArray(state.exam.revealed)) state.exam.revealed = state.exam.ids.map(() => false);
         state.exam.revealed[index] = true;
+        rememberExamAnswer(index);
+        saveStore();
       }
       writeExam(state.exam);
       render({ scroll: "keep" });
@@ -766,8 +978,11 @@
     if (state.view === "exam" && state.exam) {
       if (!Array.isArray(state.exam.revealed)) state.exam.revealed = state.exam.ids.map(() => false);
       state.exam.picked.forEach((answer, index) => {
-        if (answer) state.exam.revealed[index] = true;
+        if (!answer) return;
+        state.exam.revealed[index] = true;
+        rememberExamAnswer(index);
       });
+      saveStore();
       writeExam(state.exam);
     }
     if (state.view === "study" && state.study && !state.study.graded) {
@@ -777,19 +992,20 @@
         if (!memory || !memory.picked || memory.revealed) return;
         if (!memory.counted) recordAnswer(byId.get(id), memory.picked);
         state.study.picks[id] = { picked: memory.picked, revealed: true, counted: true };
+        store.choices[id] = choiceOf(state.study.picks[id]);
         changed = true;
       });
       if (changed) saveStore();
     }
   }
 
-  function gradeStudy() {
+  async function gradeStudy() {
     if (!state.study || state.study.graded) return;
     const ids = state.study.ids;
     if (!ids.length) return;
     const blank = ids.filter((id) => !(state.study.picks[id] || {}).picked).length;
     const note = blank ? " Còn " + blank + " câu chưa chọn." : "";
-    if (!window.confirm("Chấm bài này?" + note)) return;
+    if (!await askConfirm("Chấm bài này?" + note, "Chấm bài")) return;
     let correct = 0;
     let lietWrong = false;
     ids.forEach((id) => {
@@ -801,6 +1017,7 @@
       else if (studyLiet(question)) lietWrong = true;
       if (!memory.counted) recordAnswer(question, answer);
       state.study.picks[id] = { picked: answer, revealed: true, counted: true };
+      store.choices[id] = choiceOf(state.study.picks[id]);
     });
     state.study.graded = true;
     state.study.summary = { correct, total: ids.length, lietWrong };
@@ -821,7 +1038,7 @@
     }
   }
 
-  function onClick(event) {
+  async function onClick(event) {
     const node = event.target.closest("[data-act]");
     if (!node) return;
     const act = node.dataset.act;
@@ -866,10 +1083,11 @@
       return;
     }
     if (act === "start-exam") {
-      if (state.resume && !window.confirm("Bài thi dở sẽ bị thay bằng đề mới. Tiếp tục?")) return;
+      if (state.resume && !await askConfirm("Bài thi dở sẽ bị thay bằng đề mới. Tiếp tục?", "Làm đề mới")) return;
       startExam(node.dataset.license);
       return;
     }
+    if (act === "reset-all") { await resetData(); return; }
     if (act === "resume") { resumeExam(); return; }
     if (act === "discard-exam") { writeExam(null); render({ scroll: "keep" }); return; }
     if (act === "pick") { choose(Number(node.dataset.n)); return; }
@@ -909,6 +1127,8 @@
     }
     if (act === "grade-study") { gradeStudy(); return; }
     if (act === "retry-study" && state.study) {
+      state.study.ids.forEach((id) => { delete store.choices[id]; });
+      saveStore();
       state.study.picks = {};
       state.study.graded = false;
       state.study.summary = null;
@@ -960,6 +1180,7 @@
   }
 
   function onKey(event) {
+    if (document.querySelector("dialog[open]")) return;
     if (event.target.matches("input, textarea")) return;
     if (state.view !== "study" && state.view !== "exam") return;
     if (event.key >= "1" && event.key <= "4") {
@@ -985,17 +1206,68 @@
     app.addEventListener("click", onClick);
     app.addEventListener("input", onInput);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", () => {
-      const box = document.querySelector(".dots");
-      const current = box && box.querySelector(".dot.on");
-      if (current) box.scrollTop = Math.max(0, current.offsetTop - (box.clientHeight - current.offsetHeight) / 2);
-    });
+    window.addEventListener("resize", scrollCurrentDot);
     if (!document.getElementById("zoom")) {
       const dialog = document.createElement("dialog");
       dialog.id = "zoom";
       dialog.innerHTML = '<img alt="">';
       dialog.addEventListener("click", () => dialog.close());
       document.body.appendChild(dialog);
+    }
+    if (!document.getElementById("confirm")) {
+      const dialog = document.createElement("dialog");
+      dialog.id = "confirm";
+      dialog.className = "confirm";
+      dialog.innerHTML = '<form method="dialog" class="confirm-card"><p></p><div class="row"><button class="btn" value="no">Hủy</button><button class="btn primary" value="yes">Đồng ý</button></div></form>';
+      dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close("no");
+      });
+      document.body.appendChild(dialog);
+    }
+    restoreSession();
+  }
+
+  function restoreSession() {
+    const view = local.getItem(VIEW_KEY);
+    const exam = readExam();
+    state.resume = exam;
+    if (view === "exam" && exam && LICENSES[exam.licenseId] && Array.isArray(exam.ids) && exam.ids.every((id) => byId.has(id))) {
+      if (!Array.isArray(exam.revealed)) exam.revealed = exam.ids.map(() => false);
+      state.exam = exam;
+      state.view = "exam";
+      writeExam(exam);
+      if (exam.endsAt <= Date.now()) submitExam(true);
+      else {
+        render({ scroll: "top" });
+        armClock();
+      }
+      return;
+    }
+    if (view === "study") {
+      const saved = readStudy();
+      if (saved) {
+        saved.picks = picksFor(saved.ids);
+        state.study = saved;
+        state.query = saved.query || "";
+        state.view = "study";
+        render({ scroll: "top" });
+        return;
+      }
+    }
+    if (view === "result") {
+      try {
+        const result = JSON.parse(local.getItem(RESULT_KEY) || "null");
+        if (result && LICENSES[result.licenseId] && Array.isArray(result.ids)) {
+          state.result = result;
+          state.view = "result";
+          render({ scroll: "top" });
+          return;
+        }
+      } catch (err) { /* về trang chủ */ }
+    }
+    if (view === "answers") {
+      openAnswers();
+      return;
     }
     render();
   }

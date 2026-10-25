@@ -396,8 +396,10 @@ body.fit .score-card { flex: none; }
 .fail { color: var(--bad); }
 .footer-note { color: var(--muted); font-size: 13px; margin: 18px 0 0; text-align: center; }
 .dash { display: grid; gap: 12px; }
+.dash-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .dash-head h1 { margin: 0; font-size: 28px; }
 .dash-head p { margin: 4px 0 0; }
+.dash-head .btn { flex: none; }
 .statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .stat {
   position: relative;
@@ -451,6 +453,17 @@ dialog {
 }
 dialog::backdrop { background: rgba(10, 16, 14, 0.72); }
 dialog img { display: block; width: 100%; background: var(--card); border-radius: 12px; }
+dialog.confirm { width: min(420px, calc(100vw - 32px)); }
+.confirm-card {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+.confirm-card p { margin: 0 0 16px; }
+.confirm-card .row { justify-content: flex-end; flex-wrap: nowrap; }
 .sheet { display: grid; gap: 8px; }
 .akey {
   position: relative;
@@ -460,7 +473,8 @@ dialog img { display: block; width: 100%; background: var(--card); border-radius
   padding: 12px 14px;
 }
 .akey .qtext { margin: 8px 0; font-size: 16px; }
-.akey-ok { margin: 0; color: var(--ok); font-weight: 700; }
+.akey .options { margin-top: 8px; }
+.akey .opt { padding: 8px 10px; cursor: default; }
 .akey details { margin-top: 8px; }
 .akey summary { cursor: pointer; color: var(--muted); }
 .hidden { display: none; }
@@ -473,4 +487,45 @@ dialog img { display: block; width: 100%; background: var(--card); border-radius
   h1 { font-size: 24px; }
   .qtext { font-size: 16px; }
   .banner { align-items: stretch; flex-direction: column; }
+  .dash-head { flex-direction: column; }
+}
+@media (max-width: 799px) {
+  .layout.with-side,
+  body.fit .layout.with-side {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .side,
+  body.fit .side {
+    order: -1;
+    position: relative;
+    top: auto;
+    height: auto;
+    max-height: none;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .dots,
+  .dots.keys,
+  body.fit .dots {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+    grid-auto-rows: unset;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex: none;
+    max-height: none;
+    gap: 6px;
+    padding: 2px 0 4px;
+    overscroll-behavior: contain;
+  }
+  .dot {
+    flex: 0 0 40px;
+    width: 40px;
+  }
+  .dot.has-key {
+    flex: 0 0 44px;
+    width: 44px;
+  }
 }
