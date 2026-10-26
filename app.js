@@ -739,6 +739,7 @@
       '<span class="meta">' + (empty ? "0 câu" : (state.study.index + 1) + " / " + ids.length) + '</span>' +
       markModeSwitch() +
       (state.study.kind === "all" ? '<button class="btn" data-act="answers">Hiện toàn bộ đáp án</button>' : '') +
+      (state.study.kind === "critical" ? '<button class="btn" data-act="reset-critical">Reset</button>' : '') +
       (state.study.summary ? "" : retryWrong) +
       '<input class="grow" type="search" data-act="search" placeholder="Tìm nội dung hoặc số câu" value="' + esc(state.query) + '">' +
       '<button class="btn" data-act="shuffle"' + (graded ? " disabled" : "") + '>Xáo trộn</button></div>' +
@@ -923,6 +924,24 @@
       dialog.addEventListener("close", finish);
       dialog.showModal();
     });
+  }
+
+  async function resetCritical() {
+    if (!state.study || state.study.kind !== "critical") return;
+    const ok = await askConfirm("Xóa kết quả 60 câu điểm liệt để làm lại từ đầu?", "Reset");
+    if (!ok) return;
+    studyIds("critical").forEach((id) => {
+      delete store.choices[id];
+      delete store.wrong[id];
+      delete store.practiced[id];
+    });
+    saveStore();
+    state.study.picks = {};
+    state.study.graded = false;
+    state.study.summary = null;
+    state.study.index = 0;
+    state.query = "";
+    render({ scroll: "top" });
   }
 
   async function resetData() {
@@ -1133,6 +1152,7 @@
       return;
     }
     if (act === "reset-all") { await resetData(); return; }
+    if (act === "reset-critical") { await resetCritical(); return; }
     if (act === "resume") { resumeExam(); return; }
     if (act === "discard-exam") { writeExam(null); render({ scroll: "keep" }); return; }
     if (act === "pick") { choose(Number(node.dataset.n)); return; }
