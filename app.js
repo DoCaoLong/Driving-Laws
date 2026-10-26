@@ -415,7 +415,7 @@
     });
   }
 
-  function startExam(licenseId) {
+  function startExam(licenseId, skin) {
     const cfg = LICENSES[licenseId];
     const ids = buildExam(licenseId);
     const exam = {
@@ -425,10 +425,11 @@
       revealed: ids.map(() => false),
       index: 0,
       endsAt: Date.now() + cfg.minutes * 60 * 1000,
+      skin: skin === "real" ? "real" : "",
     };
     state.exam = exam;
     state.result = null;
-    state.view = "exam";
+    state.view = exam.skin === "real" ? "real" : "exam";
     writeExam(exam);
     render({ scroll: "top" });
     armClock();
@@ -446,10 +447,11 @@
       revealed: ids.map(() => false),
       index: 0,
       endsAt: Date.now() + cfg.minutes * 60 * 1000,
+      skin: result.skin === "real" ? "real" : "",
     };
     state.exam = exam;
     state.result = null;
-    state.view = "exam";
+    state.view = exam.skin === "real" ? "real" : "exam";
     writeExam(exam);
     render({ scroll: "top" });
     armClock();
@@ -517,7 +519,7 @@
     if (!saved || !LICENSES[saved.licenseId]) return;
     if (!Array.isArray(saved.revealed)) saved.revealed = saved.ids.map(() => false);
     state.exam = saved;
-    state.view = "exam";
+    state.view = saved.skin === "real" ? "real" : "exam";
     if (saved.endsAt <= Date.now()) submitExam(true);
     else {
       render({ scroll: "top" });
@@ -530,7 +532,8 @@
     if (!auto) {
       const blank = state.exam.picked.filter((value) => !value).length;
       const note = blank ? " Còn " + blank + " câu chưa chọn." : "";
-      if (!await askConfirm("Nộp bài?" + note, "Nộp bài")) return;
+      const real = state.view === "real";
+      if (!await askConfirm((real ? "Kết thúc bài thi?" : "Nộp bài?") + note, real ? "Kết thúc" : "Nộp bài")) return;
     }
     const result = grade(state.exam.licenseId, state.exam.ids, state.exam.picked);
     state.exam.ids.forEach((id, index) => rememberExamAnswer(index));
@@ -547,12 +550,22 @@
       licenseId: state.exam.licenseId,
       ids: state.exam.ids.slice(),
       picked: state.exam.picked.slice(),
+      skin: state.exam.skin === "real" ? "real" : "",
     }, result, { index: null });
     state.view = "result";
     state.exam = null;
     writeExam(null);
     clearInterval(clockTimer);
     render({ scroll: "top" });
+  }
+
+  function timePercent() {
+    if (!state.exam) return 0;
+    const cfg = LICENSES[state.exam.licenseId];
+    const total = cfg.minutes * 60 * 1000;
+    if (!total) return 0;
+    const left = Math.max(0, state.exam.endsAt - Date.now());
+    return Math.max(0, Math.min(100, Math.round((left / total) * 100)));
   }
 
   function armClock() {
@@ -563,6 +576,11 @@
       const left = state.exam.endsAt - Date.now();
       node.textContent = formatTime(left);
       node.classList.toggle("urgent", left < 60000);
+      const pct = timePercent();
+      const bar = document.getElementById("timebar");
+      const label = document.getElementById("timepct");
+      if (bar) bar.style.width = pct + "%";
+      if (label) label.textContent = pct + "%";
       if (left <= 0) submitExam(true);
     }, 250);
   }
@@ -604,6 +622,7 @@
       '<nav class="nav-links">' +
       '<button class="btn ghost' + (studyOn ? " on" : "") + '" data-act="study" data-kind="all">Ôn 600 câu</button>' +
       '<button class="btn ghost' + (examId === "B" ? " on" : "") + '" data-act="start-exam" data-license="B">Thi thử hạng B</button>' +
+      '<button class="btn ghost" data-act="real-open">Thi thật</button>' +
       '<button class="btn ghost' + (state.view === "answers" ? " on" : "") + '" data-act="answers">Đáp án</button>' +
       '<button class="btn ghost icon-btn" data-act="theme" aria-pressed="' + dark + '" aria-label="' + (dark ? "Bật giao diện sáng" : "Bật giao diện tối") + '">' + themeIcon(dark) + '</button>' +
       '</nav></div></header>';
@@ -911,6 +930,77 @@
       '<button class="btn primary" data-act="submit">Nộp bài' + (blank ? " (" + blank + " trống)" : "") + '</button></aside></div></main>';
   }
 
+  function boothSeal() {
+    return '<svg class="booth-seal" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#d01218"/><circle cx="32" cy="32" r="25" fill="none" stroke="#f3d36a" stroke-width="1.6"/><circle cx="32" cy="32" r="21" fill="none" stroke="#f3d36a" stroke-width="1"/><path fill="#f6dc78" d="M32 15l3.4 10h10.4l-8.4 6.1 3.2 10L32 35.2l-8.6 6 3.2-10-8.4-6.1h10.4z"/></svg>';
+  }
+
+  function boothAvatar() {
+    return '<svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="22" r="12" fill="#8a8a8a"/><path fill="#8a8a8a" d="M6 62c1.2-16 11-24 26-24s24.8 8 26 24z"/></svg>';
+  }
+
+  function boothShell(sheet, sideBody, endLabel, endAct, hang, quiet) {
+    const pct = state.view === "real" ? timePercent() : 0;
+    const bar = state.view === "real"
+      ? '<div class="booth-time"><span id="timebar" style="width:' + pct + '%"></span><b id="timepct">' + pct + "%</b></div>"
+      : "";
+    const clock = state.view === "real" && state.exam ? formatTime(state.exam.endsAt - Date.now()) : "--:--";
+    return '<div class="booth"><section class="booth-paper"><div class="booth-sheet">' + sheet + "</div>" + bar + "</section>" +
+      '<aside class="booth-side"><div class="booth-clock"><span>THỜI GIAN CÒN LẠI</span><strong id="clock">' + clock + "</strong></div>" +
+      sideBody +
+      '<button class="booth-end' + (quiet ? " quiet" : "") + '" data-act="' + endAct + '">' + endLabel + "</button></aside>" +
+      '<footer class="booth-foot"><div class="booth-avatar">' + boothAvatar() + "</div>" +
+      '<div class="booth-info"><b>Thông tin thí sinh</b><div class="booth-id"><span>SBD: 2</span><span>Hạng: ' + esc(hang) + '</span></div><span class="booth-name">Họ Và Tên: THÍ SINH SỐ 2</span></div>' +
+      '<div class="booth-mark">' + boothSeal() + "<div><strong>BỘ 600 CÂU HỎI</strong><em>TỔNG CỤC ĐƯỜNG BỘ VIỆT NAM</em><em>DIRECTORATE FOR ROADS OF VIETNAM</em></div></div></footer>" +
+      '<p class="booth-note">Phần thi kết thúc khi hết thời gian hoặc khi thí sinh nhấn "Kết thúc".</p></div>';
+  }
+
+  function realPickHtml() {
+    const cards = Object.values(LICENSES).map((cfg) => {
+      return '<button class="booth-license" data-act="start-real" data-license="' + cfg.id + '"><b>' + esc(cfg.name) + "</b><span>" +
+        cfg.count + " câu · " + cfg.minutes + " phút · đạt " + cfg.pass + "/" + cfg.count + "</span></button>";
+    }).join("");
+    return boothShell(
+      '<h1 class="booth-pick-title">CHỌN HẠNG THI</h1><div class="booth-licenses">' + cards + "</div>",
+      '<div class="booth-wait">Chọn hạng ở khung bên trái.</div>',
+      "THOÁT",
+      "home",
+      "—",
+      true
+    );
+  }
+
+  function realExamHtml() {
+    const exam = state.exam;
+    const cfg = LICENSES[exam.licenseId];
+    const question = byId.get(exam.ids[exam.index]);
+    const figure = question.image
+      ? '<img class="booth-fig" data-act="zoom" src="' + esc(question.image) + '" alt="Hình câu ' + (exam.index + 1) + '">'
+      : "";
+    const answers = question.options.map((text, index) => {
+      const number = index + 1;
+      return '<button class="booth-ans" data-act="pick" data-n="' + number + '">' + number + "- " + esc(text) + "</button>";
+    }).join("");
+    const sheet = '<p class="booth-ask">' + esc(question.question) + "</p>" + figure + '<div class="booth-answers">' + answers + "</div>";
+    const columns = [];
+    for (let start = 0; start < exam.ids.length; start += 15) {
+      const cells = [];
+      for (let index = start; index < Math.min(exam.ids.length, start + 15); index += 1) {
+        const item = byId.get(exam.ids[index]);
+        let qn = "qn";
+        if (index === exam.index) qn += " cur";
+        else if (exam.picked[index]) qn += " done";
+        const ticks = item.options.map((text, optionIndex) => {
+          const number = optionIndex + 1;
+          const on = exam.picked[index] === number ? " on" : "";
+          return '<button class="tick' + on + '" data-act="booth-pick" data-i="' + index + '" data-n="' + number + '" aria-label="Câu ' + (index + 1) + " đáp án " + number + '"><span>' + number + "</span><i></i></button>";
+        }).join("");
+        cells.push('<div class="booth-cell"><button class="' + qn + '" data-act="goto" data-i="' + index + '" aria-label="Câu ' + (index + 1) + '">' + (index + 1) + '</button><div class="ticks">' + ticks + "</div></div>");
+      }
+      columns.push('<div class="booth-col">' + cells.join("") + "</div>");
+    }
+    return boothShell(sheet, '<div class="booth-board">' + columns.join("") + "</div>", "KẾT THÚC", "submit", cfg.id, false);
+  }
+
   function resultHtml() {
     const result = state.result;
     const cfg = LICENSES[result.licenseId];
@@ -1060,11 +1150,14 @@
     if (!QUESTIONS.length) html = '<main class="wrap main"><p>Không tải được bộ câu hỏi.</p></main>';
     else if (state.view === "study") html = studyHtml();
     else if (state.view === "exam") html = examHtml();
+    else if (state.view === "real") html = realExamHtml();
+    else if (state.view === "real-pick") html = realPickHtml();
     else if (state.view === "result") html = resultHtml();
     else if (state.view === "answers") html = answersHtml();
     else if (state.view === "stats") html = statsHtml();
     else html = homeHtml();
     document.body.classList.toggle("fit", state.view === "study" || state.view === "exam" || state.view === "result" || state.view === "answers");
+    document.body.classList.toggle("booth-on", state.view === "real" || state.view === "real-pick");
     app.innerHTML = html;
     if (options && options.scroll === "top") window.scrollTo(0, 0);
     else if (options && options.scroll === "keep") window.scrollTo(0, keep);
@@ -1141,7 +1234,7 @@
   }
 
   function currentQuestion() {
-    if (state.view === "exam" && state.exam) return byId.get(state.exam.ids[state.exam.index]);
+    if ((state.view === "exam" || state.view === "real") && state.exam) return byId.get(state.exam.ids[state.exam.index]);
     if (state.view === "study" && state.study) {
       const ids = visibleStudyIds();
       return byId.get(ids[state.study.index]);
@@ -1187,6 +1280,12 @@
   function choose(number) {
     const question = currentQuestion();
     if (!question || number < 1 || number > question.options.length) return;
+    if (state.view === "real") {
+      state.exam.picked[state.exam.index] = number;
+      writeExam(state.exam);
+      render({ scroll: "keep" });
+      return;
+    }
     if (state.view === "exam") {
       const index = state.exam.index;
       if (state.exam.revealed && state.exam.revealed[index]) return;
@@ -1274,7 +1373,7 @@
   }
 
   function move(step) {
-    if (state.view === "exam" && state.exam) {
+    if ((state.view === "exam" || state.view === "real") && state.exam) {
       state.exam.index = Math.min(state.exam.ids.length - 1, Math.max(0, state.exam.index + step));
       writeExam(state.exam);
       render({ scroll: "top" });
@@ -1340,16 +1439,39 @@
       startExam(node.dataset.license);
       return;
     }
+    if (act === "real-open") {
+      const saved = readExam();
+      if (saved && saved.skin === "real" && LICENSES[saved.licenseId] && saved.endsAt > Date.now()) {
+        resumeExam();
+        return;
+      }
+      if (saved && !await askConfirm("Bài thi dở sẽ bị thay bằng đề mới. Tiếp tục?", "Làm đề mới")) return;
+      if (saved) writeExam(null);
+      clearInterval(clockTimer);
+      state.exam = null;
+      state.view = "real-pick";
+      render({ scroll: "top" });
+      return;
+    }
+    if (act === "start-real") {
+      startExam(node.dataset.license, "real");
+      return;
+    }
     if (act === "reset-all") { await resetData(); return; }
     if (act === "reset-critical") { await resetCritical(); return; }
     if (act === "resume") { resumeExam(); return; }
     if (act === "discard-exam") { writeExam(null); render({ scroll: "keep" }); return; }
+    if (act === "booth-pick" && state.view === "real" && state.exam) {
+      state.exam.index = Number(node.dataset.i);
+      choose(Number(node.dataset.n));
+      return;
+    }
     if (act === "pick") { choose(Number(node.dataset.n)); return; }
     if (act === "next") { move(1); return; }
     if (act === "prev") { move(-1); return; }
     if (act === "goto") {
       const index = Number(node.dataset.i);
-      if (state.view === "exam" && state.exam) {
+      if ((state.view === "exam" || state.view === "real") && state.exam) {
         state.exam.index = index;
         writeExam(state.exam);
       } else if (state.view === "study" && state.study) {
@@ -1448,7 +1570,14 @@
       render({ scroll: "top" });
       return;
     }
-    if (state.view !== "study" && state.view !== "exam") return;
+    if ((state.view === "real" || state.view === "real-pick") && event.key === "Escape") {
+      event.preventDefault();
+      clearInterval(clockTimer);
+      state.view = "home";
+      render({ scroll: "top" });
+      return;
+    }
+    if (state.view !== "study" && state.view !== "exam" && state.view !== "real") return;
     if (event.key >= "1" && event.key <= "4") {
       event.preventDefault();
       choose(Number(event.key));
@@ -1497,10 +1626,10 @@
     const view = local.getItem(VIEW_KEY);
     const exam = readExam();
     state.resume = exam;
-    if (view === "exam" && exam && LICENSES[exam.licenseId] && Array.isArray(exam.ids) && exam.ids.every((id) => byId.has(id))) {
+    if ((view === "exam" || view === "real") && exam && LICENSES[exam.licenseId] && Array.isArray(exam.ids) && exam.ids.every((id) => byId.has(id))) {
       if (!Array.isArray(exam.revealed)) exam.revealed = exam.ids.map(() => false);
       state.exam = exam;
-      state.view = "exam";
+      state.view = view === "real" || exam.skin === "real" ? "real" : "exam";
       writeExam(exam);
       if (exam.endsAt <= Date.now()) submitExam(true);
       else {
@@ -1542,6 +1671,11 @@
     }
     if (view === "stats") {
       state.view = "stats";
+      render();
+      return;
+    }
+    if (view === "real-pick") {
+      state.view = "real-pick";
       render();
       return;
     }
