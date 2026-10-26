@@ -536,16 +536,18 @@
       if (!await askConfirm((real ? "Kết thúc bài thi?" : "Nộp bài?") + note, real ? "Kết thúc" : "Nộp bài")) return;
     }
     const result = grade(state.exam.licenseId, state.exam.ids, state.exam.picked);
-    state.exam.ids.forEach((id, index) => rememberExamAnswer(index));
-    store.exams.push({
-      licenseId: state.exam.licenseId,
-      correct: result.correct,
-      count: result.count,
-      passed: result.passed,
-      at: Date.now(),
-    });
-    if (store.exams.length > 100) store.exams = store.exams.slice(-100);
-    saveStore();
+    if (state.exam.skin !== "real") {
+      state.exam.ids.forEach((id, index) => rememberExamAnswer(index));
+      store.exams.push({
+        licenseId: state.exam.licenseId,
+        correct: result.correct,
+        count: result.count,
+        passed: result.passed,
+        at: Date.now(),
+      });
+      if (store.exams.length > 100) store.exams = store.exams.slice(-100);
+      saveStore();
+    }
     state.result = Object.assign({
       licenseId: state.exam.licenseId,
       ids: state.exam.ids.slice(),
@@ -648,7 +650,7 @@
       status.set(id, name);
     });
     const exam = state.exam || readExam();
-    if (exam && Array.isArray(exam.ids) && Array.isArray(exam.picked)) {
+    if (exam && exam.skin !== "real" && Array.isArray(exam.ids) && Array.isArray(exam.picked)) {
       exam.ids.forEach((id, index) => {
         if (status.get(id) !== "none") return;
         const revealed = exam.revealed && exam.revealed[index];
@@ -1031,9 +1033,12 @@
     return header() + '<main class="wrap main"><section class="qcard score-card"><p class="score ' + (result.passed ? "pass" : "fail") + '">' + headline + '</p>' +
       '<p><strong>' + result.correct + '/' + result.count + '</strong> câu đúng. Mốc đạt là ' + result.pass + '/' + result.count + '.' + esc(reason) + '</p>' +
       '<div class="row"><button class="btn primary" data-act="retry-exam">Làm lại</button>' +
-      '<button class="btn" data-act="start-exam" data-license="' + cfg.id + '">Làm đề mới</button>' +
-      (missedResultIds().length ? '<button class="btn" data-act="retry-wrong">Làm lại các câu sai</button>' : '') +
-      '<button class="btn" data-act="study" data-kind="wrong">Ôn câu đang sai</button></div></section>' +
+      (result.skin === "real"
+        ? '<button class="btn" data-act="start-real" data-license="' + cfg.id + '">Làm đề mới</button>'
+        : '<button class="btn" data-act="start-exam" data-license="' + cfg.id + '">Làm đề mới</button>' +
+          (missedResultIds().length ? '<button class="btn" data-act="retry-wrong">Làm lại các câu sai</button>' : '') +
+          '<button class="btn" data-act="study" data-kind="wrong">Ôn câu đang sai</button>') +
+      '</div></section>' +
       '<div class="layout with-side">' + review +
       '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">Bấm số để xem câu</span><span class="meta">Dấu * là câu liệt</span></div><div class="dots">' + dots + '</div></aside></div></main>';
   }
