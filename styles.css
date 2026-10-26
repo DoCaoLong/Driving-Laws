@@ -21,6 +21,10 @@
   --glow: #d7efe4;
   --dot-done: #e7f3ee;
   --dot-seen: #eef2f0;
+  --info: #1a6aa8;
+  --info-soft: #e7f3fb;
+  --ring-track: #ffffff;
+  --track: #e6e9e8;
   --hover-line: #9dceba;
   --on-brand: #ffffff;
   color-scheme: light;
@@ -49,6 +53,10 @@ html[data-theme="dark"] {
   --glow: transparent;
   --dot-done: #222222;
   --dot-seen: #1c1c1c;
+  --info: #9ec4ea;
+  --info-soft: #1a2a38;
+  --ring-track: #243140;
+  --track: #2a2a2a;
   --hover-line: #4a4a4a;
   color-scheme: dark;
 }
@@ -368,6 +376,7 @@ body.fit .side > .btn { flex: none; }
 .dot.seen { background: var(--dot-seen); }
 .dot.correct { background: var(--ok-soft); color: var(--ok); }
 .dot.wrong { background: var(--bad-soft); color: var(--bad); }
+.dot.wrong.on { background: var(--bad-soft); color: var(--bad); box-shadow: inset 0 0 0 2px var(--bad); }
 .qcard.liet::after,
 .akey.liet::after,
 .stat.liet::after,
@@ -395,6 +404,140 @@ body.fit .score-card { flex: none; }
 .pass { color: var(--ok); }
 .fail { color: var(--bad); }
 .footer-note { color: var(--muted); font-size: 13px; margin: 18px 0 0; text-align: center; }
+.progress-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 16px 16px 14px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.progress-card:hover { border-color: var(--hover-line); }
+.progress-card:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.progress-head, .progress-bar, .legend, .progress-side { display: flex; align-items: center; gap: 10px; }
+.progress-head { justify-content: space-between; }
+.progress-head strong { font-size: 22px; letter-spacing: -0.02em; }
+.progress-side { margin-left: auto; flex: none; }
+.progress-count { color: var(--info); font-weight: 750; font-size: 18px; white-space: nowrap; }
+.chev, .back {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--info-soft);
+  color: var(--info);
+  border: 0;
+  padding: 0;
+}
+.chev svg, .back svg { width: 18px; height: 18px; }
+.progress-bar { margin-top: 14px; }
+.progress-bar b { flex: none; width: 42px; text-align: right; color: var(--muted); }
+.meter {
+  flex: 1;
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--track);
+}
+.meter span { display: block; height: 100%; min-width: 6px; }
+.meter .ok { background: var(--ok); }
+.meter .bad { background: var(--bad); }
+.meter .info { background: var(--info); }
+.meter .rest { background: var(--track); min-width: 0; }
+.meter.thin { height: 8px; }
+.meter.thin span { min-width: 0; }
+.legend { flex-wrap: wrap; margin-top: 12px; color: var(--muted); font-size: 14px; gap: 8px 16px; }
+.legend i, .split i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+.legend .ok, .split .ok i, i.ok { background: var(--ok); }
+.legend .bad, .split .bad i, i.bad { background: var(--bad); }
+.legend .info, .split .info i, i.info { background: var(--info); }
+.stats-page { display: grid; gap: 12px; width: min(640px, calc(100% - 28px)); }
+.stats-head { position: relative; display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; }
+.stats-head .back { position: absolute; left: 0; top: 2px; }
+.stats-head h1 { margin: 0; font-size: 20px; }
+.stats-head p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.stat-block { padding: 16px; }
+.block-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.stat-block h2 { margin: 0; }
+.stat-block h2.mark { display: flex; align-items: center; gap: 8px; }
+.stat-block h2.mark::before {
+  content: "";
+  width: 4px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--info);
+}
+.stat-total {
+  margin: 0;
+  color: var(--info);
+  font-weight: 750;
+  white-space: nowrap;
+}
+.legend.stack { display: grid; gap: 10px; }
+.split { display: grid; grid-template-columns: minmax(0, 1.3fr) 88px 40px; gap: 10px; align-items: center; }
+.split b { text-align: right; color: var(--muted); font-weight: 650; }
+.critical-box {
+  margin-top: 14px;
+  background: var(--bad-soft);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.critical-box .row { justify-content: space-between; margin-bottom: 8px; }
+.critical-box strong, .critical-box b { color: var(--bad); }
+.critical-box .meter { background: var(--card); height: 8px; }
+.exam-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.badge {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-weight: 700;
+}
+.badge.muted { background: var(--figure); color: var(--muted); }
+.finish-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--info-soft);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+.finish-card strong { color: var(--info); font-size: 18px; }
+.finish-card p { margin: 4px 0 0; color: var(--info); }
+.ring-wrap { position: relative; width: 84px; height: 84px; flex: none; }
+.ring { width: 84px; height: 84px; display: block; }
+.ring-track, .ring-value { fill: none; stroke-width: 3.6; }
+.ring-track { stroke: var(--ring-track); }
+.ring-value { stroke: var(--info); stroke-linecap: round; }
+.ring-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-weight: 750;
+  font-size: 16px;
+  color: var(--info);
+}
 .dash { display: grid; gap: 12px; }
 .dash-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .dash-head h1 { margin: 0; font-size: 28px; }
@@ -488,6 +631,13 @@ dialog.confirm { width: min(420px, calc(100vw - 32px)); }
   .qtext { font-size: 16px; }
   .banner { align-items: stretch; flex-direction: column; }
   .dash-head { flex-direction: column; }
+  .progress-head strong { font-size: 18px; }
+  .progress-count { font-size: 16px; }
+  .chev, .back { width: 34px; height: 34px; }
+  .stats-head > div { padding: 0 42px; }
+  .stats-head h1 { font-size: 17px; }
+  .split { grid-template-columns: minmax(0, 1fr) 72px 38px; gap: 8px; }
+  .finish-card strong { font-size: 16px; }
 }
 @media (max-width: 799px) {
   .layout.with-side,

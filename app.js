@@ -22,6 +22,7 @@
   // Nhóm 20 câu điểm liệt của hạng A1/A trong Phụ lục I. Các câu liệt ô tô khác vẫn có thể nằm trong 250 câu, nhưng không làm trượt cả bài A1.
   const A1_CRITICAL_IDS = [19, 20, 21, 22, 24, 26, 27, 28, 30, 47, 48, 52, 53, 63, 64, 65, 68, 70, 71, 72];
   const A1_CRITICAL = new Set(A1_CRITICAL_IDS);
+  const TOP50_IDS = [5, 6, 34, 44, 46, 72, 92, 93, 97, 109, 124, 141, 145, 146, 304, 305, 323, 324, 326, 330, 367, 370, 374, 375, 377, 381, 382, 386, 390, 391, 393, 397, 432, 434, 435, 437, 438, 440, 461, 475, 487, 490, 507, 525, 529, 559, 562, 565, 567, 568];
 
   // Cơ cấu đề theo Mục II Công văn 2262/CSGT-P5.
   // Câu điểm liệt được bốc riêng, không tính vào số câu của từng chương.
@@ -91,12 +92,13 @@
         wrong: raw.wrong && typeof raw.wrong === "object" ? raw.wrong : {},
         practiced: sanitizePracticed(raw.practiced),
         choices: sanitizeChoices(raw.choices),
+        exams: sanitizeExams(raw.exams),
         saved: new Set(Array.isArray(raw.saved) ? raw.saved : []),
         markMode: raw.markMode === "submit" ? "submit" : "instant",
         theme: raw.theme === "dark" ? "dark" : "light",
       };
     } catch (err) {
-      return { wrong: {}, practiced: {}, choices: {}, saved: new Set(), markMode: "instant", theme: "light" };
+      return { wrong: {}, practiced: {}, choices: {}, exams: [], saved: new Set(), markMode: "instant", theme: "light" };
     }
   }
 
@@ -105,6 +107,7 @@
       wrong: store.wrong,
       practiced: store.practiced,
       choices: store.choices,
+      exams: store.exams,
       saved: [...store.saved],
       markMode: store.markMode === "submit" ? "submit" : "instant",
       theme: store.theme === "dark" ? "dark" : "light",
@@ -138,6 +141,17 @@
       };
     });
     return out;
+  }
+
+  function sanitizeExams(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((item) => item && LICENSES[item.licenseId] && Number.isFinite(Number(item.correct)) && Number.isFinite(Number(item.count)) && Number(item.count) > 0).slice(-100).map((item) => ({
+      licenseId: item.licenseId,
+      correct: Number(item.correct),
+      count: Number(item.count),
+      passed: !!item.passed,
+      at: Number(item.at) || 0,
+    }));
   }
 
   function applyTheme() {
@@ -352,6 +366,7 @@
     if (kind === "saved") return [...store.saved].filter((id) => byId.has(id)).sort((a, b) => a - b);
     if (kind === "a1") return A1_IDS.slice();
     if (kind === "a1-critical") return A1_CRITICAL_IDS.slice();
+    if (kind === "top50") return TOP50_IDS.filter((id) => byId.has(id));
     return [];
   }
 
@@ -440,6 +455,24 @@
     armClock();
   }
 
+  function reviewingWrong() {
+    return !!(state.study && (state.study.kind === "wrong" || state.study.key === "wrong-retry"));
+  }
+
+  function pruneWrongStudy() {
+    if (!reviewingWrong()) return;
+    const index = state.study.index;
+    state.study.ids = state.study.ids.filter((id) => Object.prototype.hasOwnProperty.call(store.wrong, id));
+    const picks = {};
+    state.study.ids.forEach((id) => {
+      if (state.study.picks[id]) picks[id] = state.study.picks[id];
+    });
+    state.study.picks = picks;
+    if (!state.study.ids.length) state.study.index = 0;
+    else if (index >= state.study.ids.length) state.study.index = state.study.ids.length - 1;
+    else state.study.index = index;
+  }
+
   function missedStudyIds() {
     if (!state.study) return [];
     return state.study.ids.filter((id) => {
@@ -501,6 +534,14 @@
     }
     const result = grade(state.exam.licenseId, state.exam.ids, state.exam.picked);
     state.exam.ids.forEach((id, index) => rememberExamAnswer(index));
+    store.exams.push({
+      licenseId: state.exam.licenseId,
+      correct: result.correct,
+      count: result.count,
+      passed: result.passed,
+      at: Date.now(),
+    });
+    if (store.exams.length > 100) store.exams = store.exams.slice(-100);
     saveStore();
     state.result = Object.assign({
       licenseId: state.exam.licenseId,
@@ -568,6 +609,91 @@
       '</nav></div></header>';
   }
 
+  function percent(part, total) {
+    if (!total) return 0;
+    return Math.round((part / total) * 100);
+  }
+
+  function studyProgress() {
+    const status = new Map();
+    QUESTIONS.forEach((question) => {
+      const id = question.id;
+      const choice = store.choices[id];
+      let name = "none";
+      if (choice && choice.picked) {
+        name = choice.revealed ? (choice.picked === question.correct_option ? "correct" : "wrong") : "doing";
+      } else if (Object.prototype.hasOwnProperty.call(store.practiced, id)) {
+        const picked = Number(store.practiced[id]) || 0;
+        name = picked && picked === question.correct_option ? "correct" : "wrong";
+      } else if (store.wrong[id]) name = "wrong";
+      status.set(id, name);
+    });
+    const exam = state.exam || readExam();
+    if (exam && Array.isArray(exam.ids) && Array.isArray(exam.picked)) {
+      exam.ids.forEach((id, index) => {
+        if (status.get(id) !== "none") return;
+        const revealed = exam.revealed && exam.revealed[index];
+        if (exam.picked[index] && !revealed) status.set(id, "doing");
+      });
+    }
+    let correct = 0;
+    let wrong = 0;
+    let doing = 0;
+    status.forEach((name) => {
+      if (name === "correct") correct += 1;
+      else if (name === "wrong") wrong += 1;
+      else if (name === "doing") doing += 1;
+    });
+    let criticalCorrect = 0;
+    CRITICAL_IDS.forEach((id) => {
+      if (status.get(id) === "correct") criticalCorrect += 1;
+    });
+    const exams = store.exams || [];
+    let best = null;
+    exams.forEach((item) => {
+      if (!best || item.correct / item.count > best.correct / best.count) best = item;
+    });
+    return {
+      total: QUESTIONS.length,
+      correct: correct,
+      wrong: wrong,
+      doing: doing,
+      touched: correct + wrong + doing,
+      criticalCorrect: criticalCorrect,
+      criticalTotal: CRITICAL_IDS.length,
+      examCount: exams.length,
+      passed: exams.filter((item) => item.passed).length,
+      best: best,
+      latest: exams.length ? exams[exams.length - 1] : null,
+      goal: 20,
+    };
+  }
+
+  function meter(segments) {
+    return '<div class="meter">' + segments.filter((part) => part.value > 0).map((part) => {
+      return '<span class="' + part.cls + '" style="flex:' + part.value + '"></span>';
+    }).join("") + "</div>";
+  }
+
+  function thinMeter(cls, value, total) {
+    return '<div class="meter thin"><span class="' + cls + '" style="width:' + percent(value, total) + '%"></span></div>';
+  }
+
+  function progressCard() {
+    const stats = studyProgress();
+    const rate = percent(stats.touched, stats.total);
+    return '<div class="progress-card" data-act="stats" role="button" tabindex="0" aria-label="Xem thống kê tiến độ ôn tập">' +
+      '<div class="progress-head"><strong>Tiến độ ôn tập</strong><span class="progress-side"><span class="progress-count">' + stats.touched + "/" + stats.total + " câu</span>" +
+      '<span class="chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>' +
+      '<div class="progress-bar">' + meter([
+        { cls: "ok", value: stats.correct },
+        { cls: "bad", value: stats.wrong },
+        { cls: "info", value: stats.doing },
+        { cls: "rest", value: Math.max(0, stats.total - stats.touched) },
+      ]) + '<b>' + rate + "%</b></div>" +
+      '<div class="legend"><span><i class="ok"></i>Đúng ' + stats.correct + '</span><span><i class="bad"></i>Sai ' + stats.wrong + '</span><span><i class="info"></i>Đang làm ' + stats.doing + "</span></div></div>";
+  }
+
   function homeHtml() {
     const wrongCount = Object.keys(store.wrong).length;
     const savedCount = store.saved.size;
@@ -591,6 +717,7 @@
       '<div class="dash-head"><div><h1>Tổng quan</h1>' +
       '<p class="lead">Bộ 600 câu Cục CSGT. Hạng ô tô sai 1 trong 60 câu liệt là trượt. Hạng A1 và A chỉ tính 20 câu liệt.</p></div>' +
       '<button class="btn warn" data-act="reset-all">Xóa dữ liệu</button></div>' +
+      progressCard() +
       '<div class="statgrid">' +
       statButton("all", String(QUESTIONS.length), "Câu hỏi", "") +
       statButton("image", String(imageCount), "Câu có hình", "") +
@@ -605,6 +732,7 @@
       modeButton("all", "Cả 600 câu", "Từ câu 1 đến câu 600") +
       '<button class="mode" data-act="answers"><strong>Hiện toàn bộ đáp án</strong><em>Đáp án đúng của 600 câu</em></button>' +
       modeButton("critical", "60 câu điểm liệt", "Sai một câu là trượt ô tô") +
+      modeButton("top50", "Top 50 câu sai", "50 câu hay gặp khi thi") +
       modeButton("image", "Câu có hình", imageCount + " biển báo và sa hình") +
       modeButton("a1", "250 câu A1 / A", "Đúng phụ lục mô tô") +
       modeButton("a1-critical", "20 câu liệt A1 / A", "Sai một câu là trượt mô tô") +
@@ -681,7 +809,10 @@
       let cls = "dot";
       let title = "Câu " + id;
       if (index === state.study.index) cls += " on";
-      if (memory.revealed && memory.picked) {
+      if (reviewingWrong()) {
+        cls += " wrong";
+        title += " · Sai";
+      } else if (memory.revealed && memory.picked) {
         const good = memory.picked === question.correct_option;
         cls += good ? " correct" : " wrong";
         title += good ? " · Đúng" : " · Sai";
@@ -878,6 +1009,49 @@
       '<div class="dots keys">' + dots + '</div></aside></div></main>';
   }
 
+  function statsHtml() {
+    const stats = studyProgress();
+    const touchedRate = percent(stats.touched, stats.total);
+    const criticalRate = percent(stats.criticalCorrect, stats.criticalTotal);
+    const mastery = percent(stats.correct, stats.total);
+    const licenseName = stats.latest ? LICENSES[stats.latest.licenseId].name : "";
+    const subtitle = licenseName ? "Giấy phép lái xe · " + licenseName : "Bộ 600 câu Cục CSGT";
+    const note = stats.touched === 0
+      ? "Hãy bắt đầu ôn từ bộ 600 câu"
+      : (criticalRate < 100 ? "Tiến bộ tốt, tập trung vào các câu điểm liệt" : "Đã đúng hết câu điểm liệt, tiếp tục ôn các câu còn lại");
+    const bestText = stats.best ? "Đạt " + stats.best.correct + "/" + stats.best.count : "Chưa làm";
+    const ring = 2 * Math.PI * 15.5;
+    const offset = (ring * (100 - mastery) / 100).toFixed(2);
+    const arc = mastery > 0
+      ? '<circle class="ring-value" cx="18" cy="18" r="15.5" stroke-dasharray="' + ring.toFixed(2) + '" stroke-dashoffset="' + offset + '" transform="rotate(-90 18 18)"></circle>'
+      : "";
+    const split = (label, cls, value, total) => {
+      return '<div class="split"><span>' + label + '</span>' + thinMeter(cls, value, total) + "<b>" + percent(value, total) + "%</b></div>";
+    };
+    return header() + '<main class="wrap main stats-page"><div class="stats-head"><button class="back" data-act="home" aria-label="Quay lại"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
+      '<div><h1>Thống kê kết quả ôn thi</h1><p>' + esc(subtitle) + "</p></div></div>" +
+      '<section class="card stat-block"><div class="block-head"><h2 class="mark">Ôn tập câu hỏi</h2><p class="stat-total">' + stats.touched + "/" + stats.total + " câu</p></div>" +
+      '<div class="progress-bar">' + meter([
+        { cls: "ok", value: stats.correct },
+        { cls: "bad", value: stats.wrong },
+        { cls: "info", value: stats.doing },
+        { cls: "rest", value: Math.max(0, stats.total - stats.touched) },
+      ]) + "<b>" + touchedRate + "%</b></div>" +
+      '<div class="legend stack">' +
+      split('<i class="ok"></i>' + stats.correct + " câu đúng", "ok", stats.correct, stats.total) +
+      split('<i class="bad"></i>' + stats.wrong + " câu sai", "bad", stats.wrong, stats.total) +
+      split('<i class="info"></i>' + stats.doing + " câu đang làm", "info", stats.doing, stats.total) +
+      "</div>" +
+      '<div class="critical-box"><div class="row"><strong>Câu điểm liệt: đúng ' + stats.criticalCorrect + "/" + stats.criticalTotal + "</strong><b>" + criticalRate + "%</b></div>" +
+      thinMeter("bad", stats.criticalCorrect, stats.criticalTotal) + "</div></section>" +
+      '<section class="card stat-block"><div class="block-head"><h2 class="mark">Làm bài thi</h2><p class="stat-total">' + stats.examCount + "/" + stats.goal + " đề</p></div>" +
+      split("Đã làm " + stats.examCount + "/" + stats.goal + " đề thi", "info", Math.min(stats.examCount, stats.goal), stats.goal) +
+      split("Đạt " + stats.passed + "/" + stats.goal + " đề", "ok", Math.min(stats.passed, stats.goal), stats.goal) +
+      '<div class="exam-line"><span>Đề ngẫu nhiên</span><span class="badge' + (stats.best ? "" : " muted") + '">' + esc(bestText) + "</span></div></section>" +
+      '<section class="finish-card"><div class="ring-wrap"><svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="ring-track" cx="18" cy="18" r="15.5"></circle>' + arc + '</svg><div class="ring-label">' + mastery + "%</div></div>" +
+      "<div><strong>Mức độ hoàn thành: " + mastery + "%</strong><p>" + esc(note) + "</p></div></section></main>";
+  }
+
   function render(options) {
     const app = document.getElementById("app");
     if (!app) return;
@@ -888,6 +1062,7 @@
     else if (state.view === "exam") html = examHtml();
     else if (state.view === "result") html = resultHtml();
     else if (state.view === "answers") html = answersHtml();
+    else if (state.view === "stats") html = statsHtml();
     else html = homeHtml();
     document.body.classList.toggle("fit", state.view === "study" || state.view === "exam" || state.view === "result" || state.view === "answers");
     app.innerHTML = html;
@@ -950,6 +1125,7 @@
     store.wrong = {};
     store.practiced = {};
     store.choices = {};
+    store.exams = [];
     store.saved = new Set();
     saveStore();
     clearInterval(clockTimer);
@@ -1033,8 +1209,13 @@
       return;
     }
     recordAnswer(question, number);
+    pruneWrongStudy();
+    if (!state.study || state.study.ids.indexOf(question.id) !== -1) {
+      rememberStudy(question, { picked: number, revealed: true, counted: true });
+    } else {
+      store.choices[question.id] = choiceOf({ picked: number, revealed: true, counted: true });
+    }
     saveStore();
-    rememberStudy(question, { picked: number, revealed: true, counted: true });
     render({ scroll: "keep" });
   }
 
@@ -1051,7 +1232,7 @@
     }
     if (state.view === "study" && state.study && !state.study.graded) {
       let changed = false;
-      state.study.ids.forEach((id) => {
+      state.study.ids.slice().forEach((id) => {
         const memory = state.study.picks[id];
         if (!memory || !memory.picked || memory.revealed) return;
         if (!memory.counted) recordAnswer(byId.get(id), memory.picked);
@@ -1059,13 +1240,14 @@
         store.choices[id] = choiceOf(state.study.picks[id]);
         changed = true;
       });
+      pruneWrongStudy();
       if (changed) saveStore();
     }
   }
 
   async function gradeStudy() {
     if (!state.study || state.study.graded) return;
-    const ids = state.study.ids;
+    const ids = state.study.ids.slice();
     if (!ids.length) return;
     const blank = ids.filter((id) => !(state.study.picks[id] || {}).picked).length;
     const note = blank ? " Còn " + blank + " câu chưa chọn." : "";
@@ -1083,6 +1265,7 @@
       state.study.picks[id] = { picked: answer, revealed: true, counted: true };
       store.choices[id] = choiceOf(state.study.picks[id]);
     });
+    pruneWrongStudy();
     state.study.graded = true;
     state.study.summary = { correct, total: ids.length, lietWrong };
     state.query = "";
@@ -1130,12 +1313,18 @@
       return;
     }
     if (act === "answers") { openAnswers(); return; }
+    if (act === "stats") {
+      state.view = "stats";
+      render({ scroll: "top" });
+      return;
+    }
     if (act === "study") {
       const kind = node.dataset.kind;
       const extra = node.dataset.extra ? Number(node.dataset.extra) : null;
       const titles = {
         all: "Cả 600 câu",
         critical: "60 câu điểm liệt",
+        top50: "Top 50 câu sai",
         image: "Câu có hình",
         wrong: "Câu đang sai",
         saved: "Câu đã lưu",
@@ -1184,6 +1373,7 @@
     if (act === "retry-exam") { retryExam(); return; }
     if (act === "retry-wrong") {
       if (state.view === "result") retryWrongIds(missedResultIds());
+      else if (reviewingWrong()) retryWrongIds(state.study.ids.slice());
       else retryWrongIds(missedStudyIds());
       return;
     }
@@ -1252,6 +1442,12 @@
   function onKey(event) {
     if (document.querySelector("dialog[open]")) return;
     if (event.target.matches("input, textarea")) return;
+    if ((event.key === "Enter" || event.key === " ") && event.target.closest(".progress-card")) {
+      event.preventDefault();
+      state.view = "stats";
+      render({ scroll: "top" });
+      return;
+    }
     if (state.view !== "study" && state.view !== "exam") return;
     if (event.key >= "1" && event.key <= "4") {
       event.preventDefault();
@@ -1316,6 +1512,11 @@
     if (view === "study") {
       const saved = readStudy();
       if (saved) {
+        if (saved.kind === "wrong" || saved.key === "wrong" || saved.key === "wrong-retry") {
+          const live = studyIds("wrong");
+          saved.ids = saved.key === "wrong-retry" ? saved.ids.filter((id) => live.includes(id)) : live;
+          if (saved.index >= saved.ids.length) saved.index = Math.max(0, saved.ids.length - 1);
+        }
         saved.picks = picksFor(saved.ids);
         state.study = saved;
         state.query = saved.query || "";
@@ -1337,6 +1538,11 @@
     }
     if (view === "answers") {
       openAnswers();
+      return;
+    }
+    if (view === "stats") {
+      state.view = "stats";
+      render();
       return;
     }
     render();
