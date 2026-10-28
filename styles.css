@@ -92,6 +92,7 @@ img { max-width: 100%; height: auto; }
   gap: 10px 12px;
   padding: 12px 0;
 }
+.top-tools { display: flex; flex: 1; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .nav-links { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .nav-links .btn.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-dark); }
 .icon-btn { position: relative; width: 36px; height: 36px; padding: 0; color: var(--ink); }
@@ -199,6 +200,14 @@ input[type="search"], input[type="number"], select {
   padding: 9px 11px;
   width: 100%;
 }
+input.header-search {
+  width: auto;
+  flex: 1 1 180px;
+  max-width: 280px;
+  min-width: 140px;
+  padding: 7px 10px;
+}
+.toolbar .btn.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-dark); }
 .btn, .opt, .dot {
   border: 1px solid var(--line);
   background: var(--field);
@@ -625,6 +634,7 @@ dialog.confirm { width: min(420px, calc(100vw - 32px)); }
 @media (max-width: 720px) {
   .brand-text > span { display: none; }
   .nav-links .btn { padding: 6px 8px; font-size: 13px; }
+  input.header-search { flex-basis: 100%; max-width: none; }
 }
 @media (max-width: 640px) {
   h1 { font-size: 24px; }

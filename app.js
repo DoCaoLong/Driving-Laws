@@ -90,28 +90,56 @@
       const raw = JSON.parse(local.getItem(STORE_KEY) || "{}");
       return {
         wrong: raw.wrong && typeof raw.wrong === "object" ? raw.wrong : {},
+        misses: seedMisses(raw),
         practiced: sanitizePracticed(raw.practiced),
         choices: sanitizeChoices(raw.choices),
         exams: sanitizeExams(raw.exams),
         saved: new Set(Array.isArray(raw.saved) ? raw.saved : []),
         markMode: raw.markMode === "submit" ? "submit" : "instant",
+        autoNext: !!raw.autoNext,
         theme: raw.theme === "dark" ? "dark" : "light",
       };
     } catch (err) {
-      return { wrong: {}, practiced: {}, choices: {}, exams: [], saved: new Set(), markMode: "instant", theme: "light" };
+      return { wrong: {}, misses: {}, practiced: {}, choices: {}, exams: [], saved: new Set(), markMode: "instant", autoNext: false, theme: "light" };
     }
   }
 
   function saveStore() {
     local.setItem(STORE_KEY, JSON.stringify({
       wrong: store.wrong,
+      misses: store.misses,
       practiced: store.practiced,
       choices: store.choices,
       exams: store.exams,
       saved: [...store.saved],
       markMode: store.markMode === "submit" ? "submit" : "instant",
+      autoNext: !!store.autoNext,
       theme: store.theme === "dark" ? "dark" : "light",
     }));
+  }
+
+  function sanitizeMisses(raw) {
+    const out = {};
+    if (!raw || typeof raw !== "object") return out;
+    Object.keys(raw).forEach((key) => {
+      const id = Number(key);
+      const count = Math.floor(Number(raw[key]));
+      if (!byId.has(id) || count < 1) return;
+      out[id] = Math.min(999, count);
+    });
+    return out;
+  }
+
+  function seedMisses(raw) {
+    const misses = sanitizeMisses(raw && raw.misses);
+    if (raw && raw.misses) return misses;
+    const wrong = raw && raw.wrong && typeof raw.wrong === "object" ? raw.wrong : {};
+    Object.keys(wrong).forEach((key) => {
+      const id = Number(key);
+      const count = Math.floor(Number(wrong[key]));
+      if (byId.has(id) && count >= 2) misses[id] = Math.min(999, count);
+    });
+    return misses;
   }
 
   function sanitizePracticed(raw) {
@@ -178,7 +206,8 @@
   }
 
   function studyKey(kind, extra) {
-    return kind === "chapter" ? "chapter:" + extra : kind;
+    if (kind === "chapter" || kind === "set") return kind + ":" + extra;
+    return kind;
   }
 
   function choiceOf(raw) {
@@ -313,6 +342,76 @@
     };
   }
 
+  // 20 đề ôn, mỗi đề 30 câu, không trùng. Chia hết 600 câu.
+  // Mỗi đề có cả 6 chương và đúng 3 câu điểm liệt (60 câu liệt / 20 đề).
+  function setQuota(index) {
+    const count = [9, 1, 2, 1, 9, 5];
+    if (index < 5) {
+      count[1] += 1;
+      count[2] += 1;
+      count[3] += 1;
+    } else if (index < 7) {
+      count[3] += 1;
+      count[4] += 1;
+      count[5] += 1;
+    } else if (index < 10) {
+      count[2] += 1;
+      count[4] += 1;
+      count[5] += 1;
+    } else {
+      count[2] += 1;
+      count[3] += 1;
+      count[5] += 1;
+    }
+    return count;
+  }
+
+  function buildStudySets() {
+    const sets = Array.from({ length: 20 }, () => []);
+    const used = new Set();
+    const ofChapter = (chapter, critical) => QUESTIONS
+      .filter((q) => q.chapter === chapter && CRITICAL.has(q.id) === critical)
+      .sort((a, b) => a.id - b.id);
+    ofChapter(1, true).forEach((q, i) => {
+      sets[i % 20].push(q.id);
+      used.add(q.id);
+    });
+    const short = [];
+    sets.forEach((ids, paper) => {
+      if (ids.filter((id) => CRITICAL.has(id)).length < 3) short.push(paper);
+    });
+    const extraLiet = [];
+    for (let chapter = 2; chapter <= 6; chapter += 1) extraLiet.push(...ofChapter(chapter, true));
+    if (extraLiet.length !== short.length) throw new Error("Không chia đều câu điểm liệt cho 20 đề");
+    extraLiet.forEach((q, i) => {
+      sets[short[i]].push(q.id);
+      used.add(q.id);
+    });
+    for (let chapter = 1; chapter <= 6; chapter += 1) {
+      const normal = ofChapter(chapter, false);
+      let cursor = 0;
+      for (let paper = 0; paper < 20; paper += 1) {
+        const have = sets[paper].filter((id) => byId.get(id).chapter === chapter).length;
+        const need = setQuota(paper)[chapter - 1] - have;
+        for (let n = 0; n < need; n += 1) {
+          const q = normal[cursor];
+          cursor += 1;
+          if (!q || used.has(q.id)) throw new Error("Hết câu chương " + chapter + " ở đề " + (paper + 1));
+          sets[paper].push(q.id);
+          used.add(q.id);
+        }
+      }
+      if (cursor !== normal.length) throw new Error("Chương " + chapter + " còn " + (normal.length - cursor) + " câu");
+    }
+    if (used.size !== 600) throw new Error("20 đề không phủ hết 600 câu");
+    sets.forEach((ids) => {
+      ids.sort((a, b) => byId.get(a).chapter - byId.get(b).chapter || a - b);
+    });
+    return sets;
+  }
+
+  const STUDY_SETS = buildStudySets();
+
   function selfTest() {
     if (QUESTIONS.length !== 600) throw new Error("Thiếu câu hỏi: " + QUESTIONS.length);
     if (CRITICAL_IDS.length !== 60 || CRITICAL.size !== 60) throw new Error("Danh sách điểm liệt không đủ 60 câu");
@@ -349,11 +448,27 @@
         if (cfg.pool && ids.some((qid) => !cfg.pool.has(qid))) throw new Error(id + " lọt câu ngoài bộ");
       }
     });
+    if (STUDY_SETS.length !== 20) throw new Error("Không đủ 20 bộ đề");
+    const seenSet = new Set();
+    STUDY_SETS.forEach((ids, index) => {
+      if (ids.length !== 30) throw new Error("Đề " + (index + 1) + " không đủ 30 câu");
+      const liet = ids.filter((id) => CRITICAL.has(id));
+      if (liet.length !== 3) throw new Error("Đề " + (index + 1) + " không có 3 câu liệt");
+      for (let chapter = 1; chapter <= 6; chapter += 1) {
+        if (!ids.some((id) => byId.get(id).chapter === chapter)) throw new Error("Đề " + (index + 1) + " thiếu chương " + chapter);
+      }
+      ids.forEach((id) => {
+        if (seenSet.has(id)) throw new Error("Câu " + id + " nằm ở hai đề");
+        seenSet.add(id);
+      });
+    });
+    if (seenSet.size !== 600) throw new Error("20 đề không phủ 600 câu");
     return {
       questions: QUESTIONS.length,
       images: QUESTIONS.filter((q) => q.image).length,
       critical: QUESTIONS.filter((q) => q.is_critical).length,
       criticalA1: A1_CRITICAL.size,
+      sets: STUDY_SETS.length,
     };
   }
 
@@ -367,7 +482,21 @@
     if (kind === "a1") return A1_IDS.slice();
     if (kind === "a1-critical") return A1_CRITICAL_IDS.slice();
     if (kind === "top50") return TOP50_IDS.filter((id) => byId.has(id));
+    if (kind === "set") {
+      const paper = STUDY_SETS[(Number(extra) || 1) - 1];
+      return paper ? paper.slice() : [];
+    }
+    if (kind === "misses") return missRank();
     return [];
+  }
+
+  function missRank() {
+    return Object.keys(store.misses).map(Number).filter((id) => byId.has(id) && Number(store.misses[id]) >= 2)
+      .sort((a, b) => Number(store.misses[b]) - Number(store.misses[a]) || a - b);
+  }
+
+  function addMiss(id) {
+    store.misses[id] = (Number(store.misses[id]) || 0) + 1;
   }
 
   function picksFor(ids) {
@@ -385,10 +514,17 @@
     const key = studyKey(kind, extra);
     const same = saved && saved.key === key;
     let ids = fresh;
-    if (same && saved.ids.length === fresh.length && saved.ids.every((id) => fresh.includes(id))) ids = saved.ids.slice();
-    const picks = picksFor(ids);
     let index = 0;
-    if (same && saved.index >= 0 && saved.index < ids.length) index = saved.index;
+    if (kind === "misses") {
+      if (same && saved.index >= 0 && saved.index < saved.ids.length) {
+        const at = fresh.indexOf(saved.ids[saved.index]);
+        if (at >= 0) index = at;
+      }
+    } else if (same && saved.ids.length === fresh.length && saved.ids.every((id) => fresh.includes(id))) {
+      ids = saved.ids.slice();
+      if (saved.index >= 0 && saved.index < ids.length) index = saved.index;
+    }
+    const picks = picksFor(ids);
     state.view = "study";
     state.query = same ? saved.query : "";
     state.study = {
@@ -618,16 +754,20 @@
     const examId = state.view === "exam" && state.exam
       ? state.exam.licenseId
       : (state.view === "result" && state.result ? state.result.licenseId : "");
+    const search = state.view === "study" || state.view === "answers"
+      ? '<input class="header-search" type="search" data-act="search" placeholder="Tìm nội dung hoặc số câu" value="' + esc(state.query) + '" aria-label="Tìm câu">'
+      : "";
     return '<header class="top"><div class="wrap top-inner">' +
       '<button class="brand" data-act="home"><img class="logo" src="favicon.svg" alt="">' +
       '<span class="brand-text"><b>Ôn thi lý thuyết</b><span>Bộ câu Cục CSGT</span></span></button>' +
+      '<div class="top-tools">' + search +
       '<nav class="nav-links">' +
       '<button class="btn ghost' + (studyOn ? " on" : "") + '" data-act="study" data-kind="all">Ôn 600 câu</button>' +
       '<button class="btn ghost' + (examId === "B" ? " on" : "") + '" data-act="start-exam" data-license="B">Thi thử hạng B</button>' +
       '<button class="btn ghost" data-act="real-open">Thi thật</button>' +
       '<button class="btn ghost' + (state.view === "answers" ? " on" : "") + '" data-act="answers">Đáp án</button>' +
       '<button class="btn ghost icon-btn" data-act="theme" aria-pressed="' + dark + '" aria-label="' + (dark ? "Bật giao diện sáng" : "Bật giao diện tối") + '">' + themeIcon(dark) + '</button>' +
-      '</nav></div></header>';
+      '</nav></div></div></header>';
   }
 
   function percent(part, total) {
@@ -751,7 +891,8 @@
       '<section class="card panel"><h2>Thi thử</h2><div class="grid licenses">' + licenses + '</div></section>' +
       '<section class="card panel"><h2>Ôn tập</h2><div class="grid modes">' +
       modeButton("all", "Cả 600 câu", "Từ câu 1 đến câu 600") +
-      '<button class="mode" data-act="answers"><strong>Hiện toàn bộ đáp án</strong><em>Đáp án đúng của 600 câu</em></button>' +
+      '<button class="mode" data-act="sets"><strong>Ôn bộ đề</strong><em>20 đề · 30 câu · không trùng</em></button>' +
+      modeButton("misses", "Câu bạn sai nhiều nhất", missRank().length ? missRank().length + " câu sai từ 2 lần" : "Câu sai từ 2 lần trở lên") +
       modeButton("critical", "60 câu điểm liệt", "Sai một câu là trượt ô tô") +
       modeButton("top50", "Top 50 câu sai", "50 câu hay gặp khi thi") +
       modeButton("image", "Câu có hình", imageCount + " biển báo và sa hình") +
@@ -781,6 +922,11 @@
       '<button data-act="mark-mode" data-mode="submit" class="' + (instant ? "" : "on") + '" aria-pressed="' + !instant + '">Chấm khi nộp</button></div>';
   }
 
+  function autoNextButton() {
+    const on = !!store.autoNext;
+    return '<button class="btn' + (on ? " on" : "") + '" data-act="auto-next" aria-pressed="' + on + '" title="Chọn đúng khi đang chấm ngay thì sang câu sau">Tự sang khi đúng</button>';
+  }
+
   function studyLiet(question) {
     if (state.study && (state.study.kind === "a1" || state.study.kind === "a1-critical")) return A1_CRITICAL.has(question.id);
     return question.is_critical;
@@ -806,7 +952,9 @@
       ? '<div class="explain"><b>Đáp án ' + question.correct_option + '</b>' + esc(question.explanation || "Không có giải thích thêm.") + '</div>'
       : "";
     const saved = store.saved.has(question.id);
+    const missCount = state.study && state.study.kind === "misses" ? Number(store.misses[question.id]) || 0 : 0;
     const badges = '<span class="pill">Câu ' + question.id + '</span>' +
+      (missCount ? '<span class="pill">Sai ' + missCount + ' lần</span>' : '') +
       (lietVisible && question.is_critical ? '<span class="pill liet">Điểm liệt</span>' : '');
     return '<div class="qhead"><div class="row">' + badges + '</div>' +
       '<button class="btn icon-btn save-btn' + (saved ? " on" : "") + '" data-act="toggle-save" data-id="' + question.id + '" aria-label="' + (saved ? "Bỏ lưu" : "Lưu câu") + '" title="' + (saved ? "Bỏ lưu" : "Lưu câu") + '">' + saveIcon(saved) + '</button></div>' +
@@ -843,8 +991,31 @@
       } else if (memory.revealed) cls += " seen";
       else if (memory.picked) cls += " done";
       if (studyLiet(question)) cls += " liet";
+      if (state.study.kind === "misses" && store.misses[id]) title += " · Sai " + store.misses[id] + " lần";
       return '<button class="' + cls + '" data-act="goto" data-i="' + index + '" title="' + title + '">' + id + '</button>';
     }).join("");
+  }
+
+  function setsHtml() {
+    const cards = STUDY_SETS.map((ids, index) => {
+      const n = index + 1;
+      let done = 0;
+      let correct = 0;
+      ids.forEach((id) => {
+        const choice = store.choices[id];
+        if (!choice || !choice.revealed || !choice.picked) return;
+        done += 1;
+        if (choice.picked === byId.get(id).correct_option) correct += 1;
+      });
+      const progress = done ? "Đúng " + correct + "/" + ids.length : "Chưa làm";
+      return '<button class="mode" data-act="study" data-kind="set" data-extra="' + n + '">' +
+        '<strong>Đề ' + n + '</strong><em>' + ids.length + ' câu · 3 câu liệt</em><em>' + progress + '</em></button>';
+    }).join("");
+    return header() + '<main class="wrap main"><div class="dash">' +
+      '<div class="dash-head"><div><h1>Ôn bộ đề</h1>' +
+      '<p class="lead">20 đề, mỗi đề 30 câu, không câu nào lặp lại. Gộp đủ 600 câu. Mỗi đề có cả 6 chương và 3 câu điểm liệt.</p></div>' +
+      '<button class="btn" data-act="home">Về tổng quan</button></div>' +
+      '<section class="card panel"><div class="grid modes">' + cards + '</div></section></div></main>';
   }
 
   function studyHtml() {
@@ -860,8 +1031,11 @@
     let mid = '<button class="btn" data-act="reveal">Xem đáp án</button>';
     if (graded) mid = '<button class="btn" data-act="retry-study">Làm lại</button>';
     else if (waiting) mid = '<button class="btn primary" data-act="grade-study"' + (empty ? " disabled" : "") + '>Chấm bài</button>';
+    const emptyText = state.study.kind === "misses"
+      ? "Chưa có câu nào sai từ 2 lần. Câu bạn chọn sai lặp lại sẽ hiện ở đây."
+      : "Không có câu nào trong mục này.";
     const card = empty
-      ? '<div class="qcard"><p>Không có câu nào trong mục này.</p></div>'
+      ? '<div class="qcard"><p>' + emptyText + '</p></div>'
       : '<article class="qcard' + (liet ? " liet" : "") + '">' + questionBody(question, memory.picked || null, !!memory.revealed, liet) +
         '<div class="nav"><button class="btn" data-act="prev" ' + (state.study.index === 0 ? "disabled" : "") + '>Câu trước</button>' +
         mid +
@@ -890,10 +1064,11 @@
       '<strong>' + esc(state.study.title) + '</strong>' +
       '<span class="meta">' + (empty ? "0 câu" : (state.study.index + 1) + " / " + ids.length) + '</span>' +
       markModeSwitch() +
+      autoNextButton() +
       (state.study.kind === "all" ? '<button class="btn" data-act="answers">Hiện toàn bộ đáp án</button>' : '') +
+      (state.study.kind === "set" ? '<button class="btn" data-act="sets">20 bộ đề</button>' : '') +
       (state.study.kind === "critical" ? '<button class="btn" data-act="reset-critical">Reset</button>' : '') +
       (state.study.summary ? "" : retryWrong) +
-      '<input class="grow" type="search" data-act="search" placeholder="Tìm nội dung hoặc số câu" value="' + esc(state.query) + '">' +
       '<button class="btn" data-act="shuffle"' + (graded ? " disabled" : "") + '>Xáo trộn</button></div>' +
       keyTip() +
       summary +
@@ -919,7 +1094,7 @@
     }).join("");
     const blank = exam.picked.filter((value) => !value).length;
     return header() + '<main class="wrap main"><div class="row toolbar"><strong>' + esc(cfg.name) + '</strong>' +
-      '<span class="meta">Câu ' + (exam.index + 1) + '/' + cfg.count + '</span>' + markModeSwitch() + '</div>' +
+      '<span class="meta">Câu ' + (exam.index + 1) + '/' + cfg.count + '</span>' + markModeSwitch() + autoNextButton() + '</div>' +
       keyTip() +
       '<div class="layout with-side"><article class="qcard' + (lietHere ? " liet" : "") + '">' +
       questionBody(question, exam.picked[exam.index], revealedHere, lietHere) +
@@ -1097,8 +1272,7 @@
       ? '<div class="sheet">' + cards + '</div>'
       : '<div class="qcard"><p>Không có câu nào khớp.</p></div>';
     return header() + '<main class="wrap main"><div class="row toolbar"><strong>' + esc(state.answers.title) + '</strong>' +
-      '<span class="meta">' + ids.length + ' câu</span>' +
-      '<input class="grow" type="search" data-act="search" placeholder="Tìm nội dung hoặc số câu" value="' + esc(state.query) + '"></div>' +
+      '<span class="meta">' + ids.length + ' câu</span></div>' +
       '<div class="layout with-side"><div class="sheet-wrap">' + sheet + '</div>' +
       '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">Chữ dưới số là đáp án</span><span class="meta">Dấu * là câu liệt</span></div>' +
       '<div class="dots keys">' + dots + '</div></aside></div></main>';
@@ -1153,6 +1327,7 @@
     const keep = options && options.scroll === "keep" ? window.scrollY : 0;
     let html = "";
     if (!QUESTIONS.length) html = '<main class="wrap main"><p>Không tải được bộ câu hỏi.</p></main>';
+    else if (state.view === "sets") html = setsHtml();
     else if (state.view === "study") html = studyHtml();
     else if (state.view === "exam") html = examHtml();
     else if (state.view === "real") html = realExamHtml();
@@ -1207,6 +1382,7 @@
       delete store.choices[id];
       delete store.wrong[id];
       delete store.practiced[id];
+      delete store.misses[id];
     });
     saveStore();
     state.study.picks = {};
@@ -1221,6 +1397,7 @@
     const ok = await askConfirm("Xóa toàn bộ dữ liệu đã lưu trên máy này? Câu đã làm, câu đã lưu và bài thi dở sẽ mất.", "Xóa");
     if (!ok) return;
     store.wrong = {};
+    store.misses = {};
     store.practiced = {};
     store.choices = {};
     store.exams = [];
@@ -1270,8 +1447,10 @@
     const answer = exam.picked[index] || 0;
     exam.logged[index] = true;
     store.practiced[id] = answer;
-    if (!answer || answer !== question.correct_option) store.wrong[id] = (store.wrong[id] || 0) + 1;
-    else delete store.wrong[id];
+    if (!answer || answer !== question.correct_option) {
+      store.wrong[id] = (store.wrong[id] || 0) + 1;
+      if (answer) addMiss(id);
+    } else delete store.wrong[id];
   }
 
   function recordAnswer(question, answer) {
@@ -1279,7 +1458,10 @@
       store.practiced[question.id] = answer;
     }
     if (answer === question.correct_option) delete store.wrong[question.id];
-    else store.wrong[question.id] = (store.wrong[question.id] || 0) + 1;
+    else {
+      store.wrong[question.id] = (store.wrong[question.id] || 0) + 1;
+      if (answer) addMiss(question.id);
+    }
   }
 
   function choose(number) {
@@ -1301,8 +1483,11 @@
         rememberExamAnswer(index);
         saveStore();
       }
+      if (store.autoNext && !submitMode() && number === question.correct_option && index < state.exam.ids.length - 1) {
+        state.exam.index = index + 1;
+      }
       writeExam(state.exam);
-      render({ scroll: "keep" });
+      render({ scroll: state.exam.index === index ? "keep" : "top" });
       return;
     }
     const prev = state.study.picks[question.id] || {};
@@ -1320,7 +1505,10 @@
       store.choices[question.id] = choiceOf({ picked: number, revealed: true, counted: true });
     }
     saveStore();
-    render({ scroll: "keep" });
+    const visible = visibleStudyIds();
+    const stay = !store.autoNext || submitMode() || number !== question.correct_option || visible[state.study.index] !== question.id || state.study.index >= visible.length - 1;
+    if (!stay) state.study.index += 1;
+    render({ scroll: stay ? "keep" : "top" });
   }
 
   function revealPending() {
@@ -1417,6 +1605,12 @@
       return;
     }
     if (act === "answers") { openAnswers(); return; }
+    if (act === "sets") {
+      clearInterval(clockTimer);
+      state.view = "sets";
+      render({ scroll: "top" });
+      return;
+    }
     if (act === "stats") {
       state.view = "stats";
       render({ scroll: "top" });
@@ -1434,8 +1628,10 @@
         saved: "Câu đã lưu",
         a1: "250 câu hạng A1 / A",
         "a1-critical": "20 câu điểm liệt hạng A1 / A",
+        misses: "Câu bạn sai nhiều nhất",
       };
-      const title = kind === "chapter" ? "Chương " + extra + ". " + CHAPTERS[extra - 1].name : titles[kind];
+      let title = kind === "chapter" ? "Chương " + extra + ". " + CHAPTERS[extra - 1].name : titles[kind];
+      if (kind === "set") title = "Đề " + extra;
       openStudy(kind, extra, title);
       return;
     }
@@ -1505,6 +1701,12 @@
       return;
     }
     if (act === "submit") { submitExam(false); return; }
+    if (act === "auto-next") {
+      store.autoNext = !store.autoNext;
+      saveStore();
+      render({ scroll: "keep" });
+      return;
+    }
     if (act === "mark-mode") {
       store.markMode = node.dataset.mode === "submit" ? "submit" : "instant";
       saveStore();
@@ -1651,6 +1853,21 @@
           saved.ids = saved.key === "wrong-retry" ? saved.ids.filter((id) => live.includes(id)) : live;
           if (saved.index >= saved.ids.length) saved.index = Math.max(0, saved.ids.length - 1);
         }
+        if (saved.kind === "misses") {
+          const live = studyIds("misses");
+          const current = saved.ids[saved.index];
+          saved.ids = live;
+          const at = live.indexOf(current);
+          saved.index = at >= 0 ? at : 0;
+        }
+        if (saved.kind === "set") {
+          const live = studyIds("set", saved.extra);
+          const same = saved.ids.length === live.length && saved.ids.every((id) => live.includes(id));
+          if (!same) {
+            saved.ids = live;
+            saved.index = 0;
+          }
+        }
         saved.picks = picksFor(saved.ids);
         state.study = saved;
         state.query = saved.query || "";
@@ -1679,6 +1896,11 @@
       render();
       return;
     }
+    if (view === "sets") {
+      state.view = "sets";
+      render();
+      return;
+    }
     if (view === "real-pick") {
       state.view = "real-pick";
       render();
@@ -1687,7 +1909,7 @@
     render();
   }
 
-  globalThis.GPLX = { selfTest, buildExam, grade, LICENSES, byId };
+  globalThis.GPLX = { selfTest, buildExam, grade, LICENSES, byId, STUDY_SETS };
 
   if (typeof document !== "undefined") {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
