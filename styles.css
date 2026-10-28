@@ -151,6 +151,20 @@ h2 { font-size: 16px; margin: 22px 0 10px; }
 .pick em, .mode em { display: block; }
 .mode em.pass { color: var(--ok); font-weight: 650; }
 .mode em.fail { color: var(--bad); font-weight: 650; }
+.mode.chapter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.chapter-progress { width: 100%; margin-top: auto; padding-top: 10px; }
+.chapter-counts {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.chapter-counts .ok { color: var(--ok); font-weight: 650; }
+.chapter-counts .bad { color: var(--bad); font-weight: 650; }
 .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .pill {
   display: inline-flex;

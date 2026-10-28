@@ -940,7 +940,7 @@
     return Math.round((part / total) * 100);
   }
 
-  function studyProgress() {
+  function questionStatuses() {
     const status = new Map();
     QUESTIONS.forEach((question) => {
       const id = question.id;
@@ -962,6 +962,11 @@
         if (exam.picked[index] && !revealed) status.set(id, "doing");
       });
     }
+    return status;
+  }
+
+  function studyProgress() {
+    const status = questionStatuses();
     let correct = 0;
     let wrong = 0;
     let doing = 0;
@@ -995,8 +1000,8 @@
     };
   }
 
-  function meter(segments) {
-    return '<div class="meter">' + segments.filter((part) => part.value > 0).map((part) => {
+  function meter(segments, thin) {
+    return '<div class="meter' + (thin ? " thin" : "") + '">' + segments.filter((part) => part.value > 0).map((part) => {
       return '<span class="' + part.cls + '" style="flex:' + part.value + '"></span>';
     }).join("") + "</div>";
   }
@@ -1067,13 +1072,34 @@
       modeButton("saved", "Câu đã lưu", savedCount + " câu") +
       '</div></section>' +
       '<section class="card panel"><h2>Theo chương</h2><div class="grid modes">' +
-      CHAPTERS.map((chapter) => {
-        return '<button class="mode" data-act="study" data-kind="chapter" data-extra="' + chapter.id + '">' +
-          '<strong>Chương ' + chapter.id + '</strong><em>' + esc(chapter.name) + '</em>' +
-          '<em>Câu ' + chapter.from + '–' + chapter.to + '</em></button>';
-      }).join("") +
+      chapterCards() +
       '</div></section>' +
       '<p class="footer-note">Made by LongDC. Trang web chỉ phục vụ mục đích ôn luyện và học tập, không thương mại.</p></div></main>';
+  }
+
+  function chapterCards() {
+    const status = questionStatuses();
+    return CHAPTERS.map((chapter) => {
+      let correct = 0;
+      let wrong = 0;
+      let total = 0;
+      QUESTIONS.forEach((question) => {
+        if (question.chapter !== chapter.id) return;
+        total += 1;
+        const name = status.get(question.id);
+        if (name === "correct") correct += 1;
+        else if (name === "wrong") wrong += 1;
+      });
+      return '<button class="mode chapter" data-act="study" data-kind="chapter" data-extra="' + chapter.id + '">' +
+        '<strong>Chương ' + chapter.id + '</strong><em>' + esc(chapter.name) + '</em>' +
+        '<em>Câu ' + chapter.from + '–' + chapter.to + '</em>' +
+        '<span class="chapter-progress">' + meter([
+          { cls: "ok", value: correct },
+          { cls: "bad", value: wrong },
+          { cls: "rest", value: Math.max(0, total - correct - wrong) },
+        ], true) +
+        '<span class="chapter-counts"><b class="ok">Đúng ' + correct + '</b><b class="bad">Sai ' + wrong + '</b></span></span></button>';
+    }).join("");
   }
 
   function statButton(kind, value, label, extra) {
@@ -1223,7 +1249,7 @@
         '<button class="btn primary" data-act="next" ' + (state.study.index >= ids.length - 1 ? "disabled" : "") + '>Câu sau</button></div></article>';
     const pickedCount = state.study.ids.filter((qid) => (state.study.picks[qid] || {}).picked).length;
     const missed = missedStudyIds();
-    const retryWrong = (state.study.kind === "wrong" || state.study.key === "wrong-retry" || graded) && missed.length
+    const retryWrong = state.study.kind !== "misses" && state.study.kind !== "saved" && (state.study.kind === "wrong" || state.study.key === "wrong-retry" || graded) && missed.length
       ? '<button class="btn" data-act="retry-wrong">Làm lại các câu sai</button>'
       : "";
     let summary = "";
@@ -1265,6 +1291,8 @@
       (state.study.kind === "all" ? '<button class="btn" data-act="answers">Hiện toàn bộ đáp án</button>' : '') +
       (state.study.kind === "set" ? '<button class="btn" data-act="sets">20 bộ đề</button>' : '') +
       (state.study.kind === "critical" ? '<button class="btn icon-btn" data-act="reset-critical" aria-label="Reset" title="Reset">' + resetIcon() + '</button>' : '') +
+      (state.study.kind === "misses" ? '<button class="btn" data-act="reset-misses">Reset toàn bộ</button>' : '') +
+      (state.study.kind === "saved" ? '<button class="btn" data-act="reset-saved">Reset toàn bộ</button>' : '') +
       (state.study.summary ? "" : retryWrong) +
       '<button class="btn icon-btn" data-act="shuffle"' + (graded ? " disabled" : "") + ' aria-label="Xáo trộn" title="Xáo trộn">' + shuffleIcon() + '</button>' +
       '</div></div>' +
@@ -1575,6 +1603,36 @@
     });
   }
 
+  async function resetMisses() {
+    if (!state.study || state.study.kind !== "misses") return;
+    const ok = await askConfirm("Xóa toàn bộ danh sách câu sai nhiều nhất?", "Reset toàn bộ");
+    if (!ok || !state.study || state.study.kind !== "misses") return;
+    store.misses = {};
+    saveStore();
+    state.study.ids = [];
+    state.study.picks = {};
+    state.study.graded = false;
+    state.study.summary = null;
+    state.study.index = 0;
+    state.query = "";
+    render({ scroll: "top" });
+  }
+
+  async function resetSaved() {
+    if (!state.study || state.study.kind !== "saved") return;
+    const ok = await askConfirm("Xóa toàn bộ câu đã lưu?", "Reset toàn bộ");
+    if (!ok || !state.study || state.study.kind !== "saved") return;
+    store.saved = new Set();
+    saveStore();
+    state.study.ids = [];
+    state.study.picks = {};
+    state.study.graded = false;
+    state.study.summary = null;
+    state.study.index = 0;
+    state.query = "";
+    render({ scroll: "top" });
+  }
+
   async function resetCritical() {
     if (!state.study || state.study.kind !== "critical") return;
     const ok = await askConfirm("Xóa kết quả 60 câu điểm liệt để làm lại từ đầu?", "Reset");
@@ -1870,6 +1928,8 @@
     }
     if (act === "reset-all") { await resetData(); return; }
     if (act === "reset-critical") { await resetCritical(); return; }
+    if (act === "reset-misses") { await resetMisses(); return; }
+    if (act === "reset-saved") { await resetSaved(); return; }
     if (act === "resume") { resumeExam(); return; }
     if (act === "discard-exam") { writeExam(null); render({ scroll: "keep" }); return; }
     if (act === "booth-pick" && state.view === "real" && state.exam) {
