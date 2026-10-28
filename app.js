@@ -658,10 +658,24 @@
       ids = saved.ids.slice();
       if (saved.index >= 0 && saved.index < ids.length) index = saved.index;
     }
-    let picks = picksFor(ids);
+    let picks = kind === "saved" ? {} : picksFor(ids);
     let graded = !!(same && saved.graded);
     let summary = same && saved.summary ? saved.summary : null;
     let endsAt = 0;
+    if (kind === "saved") {
+      ids = fresh;
+      graded = false;
+      summary = null;
+      if (same) {
+        fresh.forEach((id) => {
+          if (saved.picks[id]) picks[id] = saved.picks[id];
+        });
+        const at = fresh.indexOf(saved.ids[saved.index]);
+        if (at >= 0) index = at;
+        graded = !!saved.graded;
+        summary = saved.summary || null;
+      }
+    }
     if (kind === "set") {
       settleExpiredSet(extra);
       picks = setPicks(extra);
@@ -719,6 +733,46 @@
     writeExam(exam);
     render({ scroll: "top" });
     armClock();
+  }
+
+  function examRows(exam) {
+    const revealed = Array.isArray(exam.revealed) ? exam.revealed : [];
+    const logged = Array.isArray(exam.logged) ? exam.logged : [];
+    return exam.ids.map((id, index) => ({
+      id: id,
+      picked: exam.picked[index],
+      revealed: !!revealed[index],
+      logged: !!logged[index],
+    }));
+  }
+
+  function applyExamRows(exam, rows) {
+    exam.ids = rows.map((row) => row.id);
+    exam.picked = rows.map((row) => row.picked);
+    exam.revealed = rows.map((row) => row.revealed);
+    exam.logged = rows.map((row) => row.logged);
+  }
+
+  async function resetExam() {
+    if (!state.exam || state.view !== "exam") return;
+    const ok = await askConfirm("Đặt lại bài thi này? Câu đã chọn sẽ bị xóa và thời gian tính lại.", "Reset");
+    if (!ok || !state.exam || state.view !== "exam") return;
+    const cfg = LICENSES[state.exam.licenseId];
+    state.exam.picked = state.exam.ids.map(() => null);
+    state.exam.revealed = state.exam.ids.map(() => false);
+    state.exam.logged = state.exam.ids.map(() => false);
+    state.exam.index = 0;
+    state.exam.endsAt = Date.now() + cfg.minutes * 60 * 1000;
+    writeExam(state.exam);
+    render({ scroll: "top" });
+  }
+
+  function shuffleExam() {
+    if (!state.exam || state.view !== "exam") return;
+    applyExamRows(state.exam, shuffle(examRows(state.exam), Math.random));
+    state.exam.index = 0;
+    writeExam(state.exam);
+    render({ scroll: "top" });
   }
 
   function retryExam() {
@@ -1061,7 +1115,7 @@
       '<section class="card panel"><h2>Thi thử</h2><div class="grid licenses">' + licenses + '</div></section>' +
       '<section class="card panel"><h2>Ôn tập</h2><div class="grid modes">' +
       modeButton("all", "Cả 600 câu", "Từ câu 1 đến câu 600") +
-      '<button class="mode" data-act="sets"><strong>Ôn bộ đề</strong><em>20 đề · 30 câu · không trùng</em></button>' +
+      practiceCard("", 'data-act="sets"', '<strong>Ôn bộ đề</strong><em>20 đề · 30 câu · không trùng</em>', "sets") +
       modeButton("misses", "Câu bạn sai nhiều nhất", missRank().length ? missRank().length + " câu sai từ 2 lần" : "Câu sai từ 2 lần trở lên") +
       modeButton("critical", "60 câu điểm liệt", "Sai một câu là trượt ô tô") +
       modeButton("top50", "Top 50 câu sai", "50 câu hay gặp khi thi") +
@@ -1090,7 +1144,7 @@
         if (name === "correct") correct += 1;
         else if (name === "wrong") wrong += 1;
       });
-      return '<button class="mode chapter" data-act="study" data-kind="chapter" data-extra="' + chapter.id + '">' +
+      return practiceCard("chapter", 'data-act="study" data-kind="chapter" data-extra="' + chapter.id + '"',
         '<strong>Chương ' + chapter.id + '</strong><em>' + esc(chapter.name) + '</em>' +
         '<em>Câu ' + chapter.from + '–' + chapter.to + '</em>' +
         '<span class="chapter-progress">' + meter([
@@ -1098,7 +1152,8 @@
           { cls: "bad", value: wrong },
           { cls: "rest", value: Math.max(0, total - correct - wrong) },
         ], true) +
-        '<span class="chapter-counts"><b class="ok">Đúng ' + correct + '</b><b class="bad">Sai ' + wrong + '</b></span></span></button>';
+        '<span class="chapter-counts"><b class="ok">Đúng ' + correct + '</b><b class="bad">Sai ' + wrong + '</b></span>',
+        "chapter", chapter.id);
     }).join("");
   }
 
@@ -1145,8 +1200,16 @@
     return question.is_critical;
   }
 
+  function practiceCard(className, openAttrs, body, resetKind, resetExtra) {
+    const extraAttr = resetExtra == null ? "" : ' data-extra="' + resetExtra + '"';
+    return '<div class="mode' + (className ? " " + className : "") + '">' +
+      '<button class="mode-hit" ' + openAttrs + '>' + body + '</button>' +
+      '<button class="btn icon-btn mode-reset" data-act="reset-part" data-kind="' + resetKind + '"' + extraAttr + ' aria-label="Reset" title="Reset">' + resetIcon() + '</button></div>';
+  }
+
   function modeButton(kind, title, note) {
-    return '<button class="mode" data-act="study" data-kind="' + kind + '"><strong>' + esc(title) + '</strong><em>' + esc(note) + '</em></button>';
+    return practiceCard("", 'data-act="study" data-kind="' + kind + '"',
+      '<strong>' + esc(title) + '</strong><em>' + esc(note) + '</em>', kind);
   }
 
   function questionBody(question, picked, revealed, lietVisible) {
@@ -1292,7 +1355,10 @@
       (state.study.kind === "set" ? '<button class="btn" data-act="sets">20 bộ đề</button>' : '') +
       (state.study.kind === "critical" ? '<button class="btn icon-btn" data-act="reset-critical" aria-label="Reset" title="Reset">' + resetIcon() + '</button>' : '') +
       (state.study.kind === "misses" ? '<button class="btn" data-act="reset-misses">Reset toàn bộ</button>' : '') +
+      (state.study.kind === "saved" ? '<button class="btn" data-act="retry-study"' + (empty ? " disabled" : "") + '>Làm lại</button>' : '') +
       (state.study.kind === "saved" ? '<button class="btn" data-act="reset-saved">Reset toàn bộ</button>' : '') +
+      (studyAnswerReset() ? '<button class="btn icon-btn" data-act="reset-part" data-kind="' + state.study.kind + '"' +
+        (state.study.extra == null ? "" : ' data-extra="' + state.study.extra + '"') + ' aria-label="Reset" title="Reset">' + resetIcon() + '</button>' : '') +
       (state.study.summary ? "" : retryWrong) +
       '<button class="btn icon-btn" data-act="shuffle"' + (graded ? " disabled" : "") + ' aria-label="Xáo trộn" title="Xáo trộn">' + shuffleIcon() + '</button>' +
       '</div></div>' +
@@ -1321,7 +1387,9 @@
     const blank = exam.picked.filter((value) => !value).length;
     return header() + '<main class="wrap main"><div class="row toolbar"><strong>' + esc(cfg.name) + '</strong>' +
       '<span class="meta">Câu ' + (exam.index + 1) + '/' + cfg.count + '</span>' +
-      '<div class="toolbar-actions">' + markModeSwitch() + autoNextButton() + '</div></div>' +
+      '<div class="toolbar-actions">' + markModeSwitch() + autoNextButton() +
+      '<button class="btn icon-btn" data-act="reset-exam" aria-label="Reset" title="Reset">' + resetIcon() + '</button>' +
+      '<button class="btn icon-btn" data-act="shuffle-exam" aria-label="Đảo lộn" title="Đảo lộn">' + shuffleIcon() + '</button></div></div>' +
       keyTip() +
       '<div class="layout with-side"><article class="qcard' + (lietHere ? " liet" : "") + '">' +
       questionBody(question, exam.picked[exam.index], revealedHere, lietHere) +
@@ -1601,6 +1669,87 @@
       dialog.addEventListener("close", finish);
       dialog.showModal();
     });
+  }
+
+  function studyAnswerReset() {
+    if (!state.study) return false;
+    return ["all", "chapter", "top50", "image", "a1", "a1-critical", "wrong"].indexOf(state.study.kind) >= 0;
+  }
+
+  function partTitle(kind, extra) {
+    if (kind === "chapter") return "Chương " + extra;
+    const names = {
+      all: "Cả 600 câu",
+      top50: "Top 50 câu sai",
+      image: "Câu có hình",
+      a1: "250 câu A1 / A",
+      "a1-critical": "20 câu liệt A1 / A",
+      critical: "60 câu điểm liệt",
+      wrong: "Câu đang sai",
+      misses: "Câu sai nhiều nhất",
+      saved: "Câu đã lưu",
+      sets: "20 bộ đề",
+    };
+    return names[kind] || "phần này";
+  }
+
+  function clearAnswerMarks(ids) {
+    ids.forEach((id) => {
+      delete store.choices[id];
+      delete store.practiced[id];
+      delete store.wrong[id];
+    });
+  }
+
+  function viewingPart(kind, extra) {
+    return state.view === "study" && state.study && state.study.kind === kind &&
+      (kind !== "chapter" || Number(state.study.extra) === Number(extra));
+  }
+
+  async function resetPart(kind, extra) {
+    const wipingList = kind === "saved" || kind === "misses";
+    const ok = await askConfirm(
+      kind === "saved" ? "Xóa toàn bộ câu đã lưu?" : (kind === "misses" ? "Xóa toàn bộ danh sách câu sai nhiều nhất?" : "Xóa kết quả " + partTitle(kind, extra) + " để làm lại?"),
+      wipingList ? "Reset toàn bộ" : "Reset");
+    if (!ok) return;
+    if (kind === "misses") store.misses = {};
+    else if (kind === "saved") store.saved = new Set();
+    else if (kind === "sets") store.sets = {};
+    else if (kind === "wrong") {
+      studyIds("wrong").forEach((id) => {
+        delete store.choices[id];
+        delete store.practiced[id];
+      });
+    } else {
+      const ids = studyIds(kind, extra);
+      clearAnswerMarks(ids);
+      if (kind === "critical" || kind === "a1-critical") ids.forEach((id) => { delete store.misses[id]; });
+    }
+    saveStore();
+    if (viewingPart(kind, extra)) {
+      if (kind === "misses" || kind === "saved") state.study.ids = [];
+      state.study.picks = {};
+      state.study.graded = false;
+      state.study.summary = null;
+      state.study.index = 0;
+      state.query = "";
+      render({ scroll: "top" });
+      return;
+    }
+    if (kind === "sets" && state.view === "study" && state.study && state.study.kind === "set") {
+      state.study.picks = {};
+      state.study.graded = false;
+      state.study.summary = null;
+      state.study.index = 0;
+      state.study.endsAt = 0;
+      const endsAt = Date.now() + SET_MINUTES * 60 * 1000;
+      store.sets[String(state.study.extra)] = { picks: {}, at: Date.now(), endsAt: endsAt };
+      state.study.endsAt = endsAt;
+      saveStore();
+      render({ scroll: "top" });
+      return;
+    }
+    render({ scroll: "keep" });
   }
 
   async function resetMisses() {
@@ -1928,6 +2077,10 @@
     }
     if (act === "reset-all") { await resetData(); return; }
     if (act === "reset-critical") { await resetCritical(); return; }
+    if (act === "reset-part") {
+      await resetPart(node.dataset.kind, node.dataset.extra == null ? null : Number(node.dataset.extra));
+      return;
+    }
     if (act === "reset-misses") { await resetMisses(); return; }
     if (act === "reset-saved") { await resetSaved(); return; }
     if (act === "resume") { resumeExam(); return; }
@@ -1964,6 +2117,8 @@
       return;
     }
     if (act === "retry-exam") { retryExam(); return; }
+    if (act === "reset-exam") { await resetExam(); return; }
+    if (act === "shuffle-exam") { shuffleExam(); return; }
     if (act === "retry-wrong") {
       if (state.view === "result") retryWrongIds(missedResultIds());
       else if (reviewingWrong()) retryWrongIds(state.study.ids.slice());
@@ -1990,7 +2145,7 @@
         const endsAt = Date.now() + SET_MINUTES * 60 * 1000;
         store.sets[String(state.study.extra)] = { picks: {}, at: Date.now(), endsAt: endsAt };
         state.study.endsAt = endsAt;
-      } else state.study.ids.forEach((id) => { delete store.choices[id]; });
+      } else if (state.study.kind !== "saved") state.study.ids.forEach((id) => { delete store.choices[id]; });
       saveStore();
       state.study.picks = {};
       state.study.graded = false;
@@ -2142,7 +2297,18 @@
             saved.index = 0;
           }
         }
-        if (saved.kind === "set") {
+        if (saved.kind === "saved") {
+          const live = studyIds("saved");
+          const current = saved.ids[saved.index];
+          saved.ids = live;
+          const at = live.indexOf(current);
+          saved.index = at >= 0 ? at : 0;
+          const kept = {};
+          live.forEach((id) => {
+            if (saved.picks[id]) kept[id] = saved.picks[id];
+          });
+          saved.picks = kept;
+        } else if (saved.kind === "set") {
           settleExpiredSet(saved.extra);
           saved.picks = setPicks(saved.extra);
           const score = scoreSet(saved.extra, saved.picks);
