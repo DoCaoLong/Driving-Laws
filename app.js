@@ -157,7 +157,7 @@
         if (!byId.has(id)) return;
         picks[id] = choiceOf(item.picks[idKey]);
       });
-      out[String(n)] = { picks: picks, at: Number(item.at) || 0 };
+      out[String(n)] = { picks: picks, at: Number(item.at) || 0, endsAt: Number(item.endsAt) || 0 };
     });
     return out;
   }
@@ -528,6 +528,7 @@
   }
 
   const SET_PASS = 27;
+  const SET_MINUTES = LICENSES.B.minutes;
 
   function setPicks(extra) {
     const record = store.sets[String(extra)];
@@ -575,21 +576,64 @@
     const picks = setPicks(extra);
     const score = scoreSet(extra, picks);
     if (score.finished) return (score.passed ? "Đạt" : "Không đạt") + " · Đúng " + score.correct + " · Sai " + score.wrong;
-    if (score.done) return "Đúng " + score.correct + " · Sai " + score.wrong;
+    const record = store.sets[String(extra)];
+    const left = record && record.endsAt ? record.endsAt - Date.now() : 0;
+    const clock = left > 0 ? " · Còn " + formatTime(left) : (record && record.endsAt ? " · Hết giờ" : "");
+    if (score.done) return "Đúng " + score.correct + " · Sai " + score.wrong + clock;
     const chosen = Object.keys(picks).filter((id) => picks[id].picked && !picks[id].revealed).length;
-    if (chosen) return "Đã chọn " + chosen + "/" + score.total;
+    if (chosen) return "Đã chọn " + chosen + "/" + score.total + clock;
+    if (clock) return "Đang làm" + clock;
     return "Chưa làm";
+  }
+
+  function ensureSetDeadline(extra) {
+    const key = String(extra);
+    const record = store.sets[key];
+    if (record && record.endsAt) return Number(record.endsAt);
+    const endsAt = Date.now() + SET_MINUTES * 60 * 1000;
+    store.sets[key] = {
+      picks: record && record.picks ? record.picks : {},
+      at: record && record.at ? record.at : Date.now(),
+      endsAt: endsAt,
+    };
+    saveStore();
+    return endsAt;
+  }
+
+  function settleExpiredSet(extra) {
+    const key = String(extra);
+    const record = store.sets[key];
+    if (!record || !record.endsAt || record.endsAt > Date.now()) return;
+    const ids = STUDY_SETS[(Number(extra) || 1) - 1] || [];
+    const picks = setPicks(extra);
+    if (scoreSet(extra, picks).finished) return;
+    ids.forEach((id) => {
+      const memory = picks[id] || {};
+      if (memory.revealed && (memory.picked || memory.counted)) return;
+      const question = byId.get(id);
+      const answer = memory.picked || null;
+      if (!memory.counted) recordAnswer(question, answer);
+      picks[id] = { picked: answer, revealed: true, counted: true };
+      store.choices[id] = choiceOf(picks[id]);
+    });
+    store.sets[key] = { picks: picks, at: Date.now(), endsAt: record.endsAt };
+    saveStore();
   }
 
   function syncSetResult() {
     if (!state.study || state.study.kind !== "set") return;
     const extra = String(state.study.extra);
+    const prev = store.sets[extra] || {};
     const picks = {};
     state.study.ids.forEach((id) => {
       if (state.study.picks[id]) picks[id] = choiceOf(state.study.picks[id]);
     });
     const score = scoreSet(extra, picks);
-    store.sets[extra] = { picks: picks, at: Date.now() };
+    store.sets[extra] = {
+      picks: picks,
+      at: Date.now(),
+      endsAt: state.study.endsAt || prev.endsAt || 0,
+    };
     if (score.finished) {
       state.study.graded = true;
       state.study.summary = score;
@@ -617,11 +661,14 @@
     let picks = picksFor(ids);
     let graded = !!(same && saved.graded);
     let summary = same && saved.summary ? saved.summary : null;
+    let endsAt = 0;
     if (kind === "set") {
+      settleExpiredSet(extra);
       picks = setPicks(extra);
       const score = scoreSet(extra, picks);
       graded = score.finished;
       summary = graded ? score : null;
+      if (!graded) endsAt = ensureSetDeadline(extra);
     }
     state.view = "study";
     state.query = same ? saved.query : "";
@@ -635,7 +682,12 @@
       picks: picks,
       graded: graded,
       summary: summary,
+      endsAt: endsAt,
     };
+    if (kind === "set" && !graded && endsAt <= Date.now()) {
+      gradeStudy(true);
+      return;
+    }
     render({ scroll: "top" });
   }
 
@@ -804,20 +856,35 @@
     return Math.max(0, Math.min(100, Math.round((left / total) * 100)));
   }
 
+  function clockTarget() {
+    if ((state.view === "exam" || state.view === "real") && state.exam) return state.exam.endsAt;
+    if (state.view === "study" && state.study && state.study.kind === "set" && !state.study.graded) return state.study.endsAt;
+    return 0;
+  }
+
   function armClock() {
     clearInterval(clockTimer);
     clockTimer = setInterval(() => {
+      const endsAt = clockTarget();
       const node = document.getElementById("clock");
-      if (!node || !state.exam) return;
-      const left = state.exam.endsAt - Date.now();
-      node.textContent = formatTime(left);
-      node.classList.toggle("urgent", left < 60000);
-      const pct = timePercent();
-      const bar = document.getElementById("timebar");
-      const label = document.getElementById("timepct");
-      if (bar) bar.style.width = pct + "%";
-      if (label) label.textContent = pct + "%";
-      if (left <= 0) submitExam(true);
+      if (!endsAt) return;
+      const left = endsAt - Date.now();
+      if (node) {
+        node.textContent = formatTime(left);
+        node.classList.toggle("urgent", left < 60000);
+      }
+      if (state.view === "real") {
+        const pct = timePercent();
+        const bar = document.getElementById("timebar");
+        const label = document.getElementById("timepct");
+        if (bar) bar.style.width = pct + "%";
+        if (label) label.textContent = pct + "%";
+      }
+      if (left <= 0) {
+        clearInterval(clockTimer);
+        if (state.exam && (state.view === "exam" || state.view === "real")) submitExam(true);
+        else gradeStudy(true);
+      }
     }, 250);
   }
 
@@ -1117,6 +1184,7 @@
   }
 
   function setsHtml() {
+    STUDY_SETS.forEach((_, index) => settleExpiredSet(index + 1));
     const cards = STUDY_SETS.map((ids, index) => {
       const n = index + 1;
       const score = scoreSet(n, setPicks(n));
@@ -1126,7 +1194,7 @@
     }).join("");
     return header() + '<main class="wrap main"><div class="dash">' +
       '<div class="dash-head"><div><h1>Ôn bộ đề</h1>' +
-      '<p class="lead">20 đề, mỗi đề 30 câu, không câu nào lặp lại. Câu chỉ hiện đúng hoặc sai sau khi làm trong đề đó. Đạt khi đúng từ 27/30 và không sai câu điểm liệt.</p></div>' +
+      '<p class="lead">20 đề, mỗi đề 30 câu trong ' + SET_MINUTES + ' phút. Hết giờ hoặc bấm Chấm điểm sẽ tính kết quả. Đạt khi đúng từ 27/30 và không sai câu điểm liệt.</p></div>' +
       '<button class="btn" data-act="home">Về tổng quan</button></div>' +
       '<section class="card panel"><div class="grid modes">' + cards + '</div></section></div></main>';
   }
@@ -1143,7 +1211,7 @@
     const waiting = submitMode() && !graded;
     let mid = '<button class="btn" data-act="reveal">Xem đáp án</button>';
     if (graded) mid = '<button class="btn" data-act="retry-study">Làm lại</button>';
-    else if (waiting) mid = '<button class="btn primary" data-act="grade-study"' + (empty ? " disabled" : "") + '>Chấm bài</button>';
+    else if (waiting) mid = '<button class="btn primary" data-act="grade-study"' + (empty ? " disabled" : "") + '>' + (state.study.kind === "set" ? "Chấm điểm" : "Chấm bài") + '</button>';
     const emptyText = state.study.kind === "misses"
       ? "Chưa có câu nào sai từ 2 lần. Câu bạn chọn sai lặp lại sẽ hiện ở đây."
       : "Không có câu nào trong mục này.";
@@ -1170,15 +1238,23 @@
         '<div class="meta">' + (state.study.summary.lietWrong ? "Có câu điểm liệt bị sai hoặc bỏ trống." : "Không sai câu điểm liệt.") + '</div></div>' +
         '<div class="row"><button class="btn" data-act="retry-study">Làm lại</button>' + retryWrong + '</div></div>';
     }
+    const setLive = state.study.kind === "set" && !graded;
+    const setLeft = setLive && state.study.endsAt ? state.study.endsAt - Date.now() : 0;
+    const setClock = setLive
+      ? '<p class="clock' + (setLeft < 60000 ? " urgent" : "") + '" id="clock">' + formatTime(Math.max(0, setLeft)) + '</p>' +
+        '<span class="meta">' + SET_MINUTES + ' phút · hết giờ tự chấm điểm</span>'
+      : "";
     const sideMeta = waiting
       ? pickedCount + "/" + state.study.ids.length + " đã chọn"
       : ids.length + " câu";
     const hasPractice = state.study.kind === "all" && state.study.ids.some((qid) => Object.prototype.hasOwnProperty.call(store.practiced, qid));
-    const side = '<aside class="side"><div class="side-head"><strong>Số câu</strong><span class="meta">' + sideMeta + '</span>' +
+    const side = '<aside class="side"><div class="side-head">' + setClock + '<strong>Số câu</strong><span class="meta">' + sideMeta + '</span>' +
+      (setLive ? '<span class="meta">Đạt từ ' + SET_PASS + '/30, không sai câu liệt</span>' : '') +
       (hasPractice ? '<span class="meta">Xanh là đúng, đỏ là sai</span>' : '') +
       '<span class="meta">Dấu * là câu liệt</span></div>' +
       '<div class="dots">' + studyDots(ids) + '</div>' +
-      (waiting && !empty ? '<button class="btn primary" data-act="grade-study">Chấm bài</button>' : "") +
+      (setLive && !empty ? '<button class="btn primary" data-act="grade-study">Chấm điểm</button>' : "") +
+      (waiting && !setLive && !empty ? '<button class="btn primary" data-act="grade-study">Chấm bài</button>' : "") +
       '</aside>';
     return header() + '<main class="wrap main"><div class="row toolbar">' +
       '<strong>' + esc(state.study.title) + '</strong>' +
@@ -1470,6 +1546,8 @@
     local.setItem(VIEW_KEY, state.view);
     if (state.view === "study") writeStudy();
     if (state.view === "result" && state.result) local.setItem(RESULT_KEY, JSON.stringify(state.result));
+    if (clockTarget() > Date.now()) armClock();
+    else clearInterval(clockTimer);
   }
 
   function scrollCurrentDot() {
@@ -1662,13 +1740,19 @@
     }
   }
 
-  async function gradeStudy() {
-    if (!state.study || state.study.graded) return;
+  async function gradeStudy(auto) {
+    if (!state.study || state.study.graded || state.study.grading) return;
     const ids = state.study.ids.slice();
     if (!ids.length) return;
-    const blank = ids.filter((id) => !(state.study.picks[id] || {}).picked).length;
-    const note = blank ? " Còn " + blank + " câu chưa chọn." : "";
-    if (!await askConfirm("Chấm bài này?" + note, "Chấm bài")) return;
+    const setPaper = state.study.kind === "set";
+    if (!auto) {
+      const blank = ids.filter((id) => !(state.study.picks[id] || {}).picked).length;
+      const note = blank ? " Còn " + blank + " câu chưa chọn." : "";
+      state.study.grading = true;
+      const ok = await askConfirm((setPaper ? "Chấm điểm đề này?" : "Chấm bài này?") + note, setPaper ? "Chấm điểm" : "Chấm bài");
+      if (state.study) state.study.grading = false;
+      if (!ok || !state.study || state.study.graded) return;
+    }
     let correct = 0;
     let lietWrong = false;
     ids.forEach((id) => {
@@ -1842,8 +1926,11 @@
     }
     if (act === "grade-study") { gradeStudy(); return; }
     if (act === "retry-study" && state.study) {
-      if (state.study.kind === "set") delete store.sets[String(state.study.extra)];
-      else state.study.ids.forEach((id) => { delete store.choices[id]; });
+      if (state.study.kind === "set") {
+        const endsAt = Date.now() + SET_MINUTES * 60 * 1000;
+        store.sets[String(state.study.extra)] = { picks: {}, at: Date.now(), endsAt: endsAt };
+        state.study.endsAt = endsAt;
+      } else state.study.ids.forEach((id) => { delete store.choices[id]; });
       saveStore();
       state.study.picks = {};
       state.study.graded = false;
@@ -1996,14 +2083,20 @@
           }
         }
         if (saved.kind === "set") {
+          settleExpiredSet(saved.extra);
           saved.picks = setPicks(saved.extra);
           const score = scoreSet(saved.extra, saved.picks);
           saved.graded = score.finished;
           saved.summary = score.finished ? score : null;
+          saved.endsAt = saved.graded ? 0 : ensureSetDeadline(saved.extra);
         } else saved.picks = picksFor(saved.ids);
         state.study = saved;
         state.query = saved.query || "";
         state.view = "study";
+        if (saved.kind === "set" && !saved.graded && saved.endsAt <= Date.now()) {
+          gradeStudy(true);
+          return;
+        }
         render({ scroll: "top" });
         return;
       }
