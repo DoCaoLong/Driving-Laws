@@ -156,33 +156,6 @@ h2 { font-size: 16px; margin: 22px 0 10px; }
   flex-direction: column;
   align-items: stretch;
 }
-.mode:has(.mode-reset) { position: relative; padding-right: 46px; }
-.mode-hit {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  width: 100%;
-  min-height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.mode-reset {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 32px;
-  height: 32px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--muted);
-}
-.mode-reset:hover { background: var(--brand-soft); color: var(--ink); }
 .chapter-progress { width: 100%; margin-top: auto; padding-top: 10px; }
 .chapter-counts {
   display: flex;

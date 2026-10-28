@@ -1115,7 +1115,7 @@
       '<section class="card panel"><h2>Thi thử</h2><div class="grid licenses">' + licenses + '</div></section>' +
       '<section class="card panel"><h2>Ôn tập</h2><div class="grid modes">' +
       modeButton("all", "Cả 600 câu", "Từ câu 1 đến câu 600") +
-      practiceCard("", 'data-act="sets"', '<strong>Ôn bộ đề</strong><em>20 đề · 30 câu · không trùng</em>', "sets") +
+      '<button class="mode" data-act="sets"><strong>Ôn bộ đề</strong><em>20 đề · 30 câu · không trùng</em></button>' +
       modeButton("misses", "Câu bạn sai nhiều nhất", missRank().length ? missRank().length + " câu sai từ 2 lần" : "Câu sai từ 2 lần trở lên") +
       modeButton("critical", "60 câu điểm liệt", "Sai một câu là trượt ô tô") +
       modeButton("top50", "Top 50 câu sai", "50 câu hay gặp khi thi") +
@@ -1144,7 +1144,7 @@
         if (name === "correct") correct += 1;
         else if (name === "wrong") wrong += 1;
       });
-      return practiceCard("chapter", 'data-act="study" data-kind="chapter" data-extra="' + chapter.id + '"',
+      return '<button class="mode chapter" data-act="study" data-kind="chapter" data-extra="' + chapter.id + '">' +
         '<strong>Chương ' + chapter.id + '</strong><em>' + esc(chapter.name) + '</em>' +
         '<em>Câu ' + chapter.from + '–' + chapter.to + '</em>' +
         '<span class="chapter-progress">' + meter([
@@ -1152,8 +1152,7 @@
           { cls: "bad", value: wrong },
           { cls: "rest", value: Math.max(0, total - correct - wrong) },
         ], true) +
-        '<span class="chapter-counts"><b class="ok">Đúng ' + correct + '</b><b class="bad">Sai ' + wrong + '</b></span>',
-        "chapter", chapter.id);
+        '<span class="chapter-counts"><b class="ok">Đúng ' + correct + '</b><b class="bad">Sai ' + wrong + '</b></span></button>';
     }).join("");
   }
 
@@ -1200,16 +1199,8 @@
     return question.is_critical;
   }
 
-  function practiceCard(className, openAttrs, body, resetKind, resetExtra) {
-    const extraAttr = resetExtra == null ? "" : ' data-extra="' + resetExtra + '"';
-    return '<div class="mode' + (className ? " " + className : "") + '">' +
-      '<button class="mode-hit" ' + openAttrs + '>' + body + '</button>' +
-      '<button class="btn icon-btn mode-reset" data-act="reset-part" data-kind="' + resetKind + '"' + extraAttr + ' aria-label="Reset" title="Reset">' + resetIcon() + '</button></div>';
-  }
-
   function modeButton(kind, title, note) {
-    return practiceCard("", 'data-act="study" data-kind="' + kind + '"',
-      '<strong>' + esc(title) + '</strong><em>' + esc(note) + '</em>', kind);
+    return '<button class="mode" data-act="study" data-kind="' + kind + '"><strong>' + esc(title) + '</strong><em>' + esc(note) + '</em></button>';
   }
 
   function questionBody(question, picked, revealed, lietVisible) {
