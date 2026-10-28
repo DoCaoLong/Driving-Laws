@@ -93,6 +93,7 @@
         misses: seedMisses(raw),
         practiced: sanitizePracticed(raw.practiced),
         choices: sanitizeChoices(raw.choices),
+        sets: sanitizeSets(raw.sets),
         exams: sanitizeExams(raw.exams),
         saved: new Set(Array.isArray(raw.saved) ? raw.saved : []),
         markMode: raw.markMode === "submit" ? "submit" : "instant",
@@ -100,7 +101,7 @@
         theme: raw.theme === "dark" ? "dark" : "light",
       };
     } catch (err) {
-      return { wrong: {}, misses: {}, practiced: {}, choices: {}, exams: [], saved: new Set(), markMode: "instant", autoNext: false, theme: "light" };
+      return { wrong: {}, misses: {}, practiced: {}, choices: {}, sets: {}, exams: [], saved: new Set(), markMode: "instant", autoNext: false, theme: "light" };
     }
   }
 
@@ -110,6 +111,7 @@
       misses: store.misses,
       practiced: store.practiced,
       choices: store.choices,
+      sets: store.sets,
       exams: store.exams,
       saved: [...store.saved],
       markMode: store.markMode === "submit" ? "submit" : "instant",
@@ -140,6 +142,24 @@
       if (byId.has(id) && count >= 2) misses[id] = Math.min(999, count);
     });
     return misses;
+  }
+
+  function sanitizeSets(raw) {
+    const out = {};
+    if (!raw || typeof raw !== "object") return out;
+    Object.keys(raw).forEach((key) => {
+      const n = Number(key);
+      const item = raw[key] || {};
+      if (n < 1 || n > 20 || !item.picks || typeof item.picks !== "object") return;
+      const picks = {};
+      Object.keys(item.picks).forEach((idKey) => {
+        const id = Number(idKey);
+        if (!byId.has(id)) return;
+        picks[id] = choiceOf(item.picks[idKey]);
+      });
+      out[String(n)] = { picks: picks, at: Number(item.at) || 0 };
+    });
+    return out;
   }
 
   function sanitizePracticed(raw) {
@@ -507,6 +527,76 @@
     return picks;
   }
 
+  const SET_PASS = 27;
+
+  function setPicks(extra) {
+    const record = store.sets[String(extra)];
+    const picks = {};
+    if (!record || !record.picks) return picks;
+    const allowed = new Set(STUDY_SETS[(Number(extra) || 1) - 1] || []);
+    Object.keys(record.picks).forEach((key) => {
+      const id = Number(key);
+      if (!allowed.has(id)) return;
+      picks[id] = choiceOf(record.picks[key]);
+    });
+    return picks;
+  }
+
+  function scoreSet(extra, picks) {
+    const ids = STUDY_SETS[(Number(extra) || 1) - 1] || [];
+    let correct = 0;
+    let wrong = 0;
+    let lietWrong = false;
+    let done = 0;
+    ids.forEach((id) => {
+      const memory = picks[id];
+      if (!memory || !memory.revealed || (!memory.picked && !memory.counted)) return;
+      done += 1;
+      const question = byId.get(id);
+      if (memory.picked === question.correct_option) correct += 1;
+      else {
+        wrong += 1;
+        if (question.is_critical) lietWrong = true;
+      }
+    });
+    const finished = ids.length > 0 && done === ids.length;
+    return {
+      correct: correct,
+      wrong: wrong,
+      done: done,
+      total: ids.length,
+      lietWrong: lietWrong,
+      finished: finished,
+      passed: finished ? correct >= SET_PASS && !lietWrong : null,
+    };
+  }
+
+  function setLabel(extra) {
+    const picks = setPicks(extra);
+    const score = scoreSet(extra, picks);
+    if (score.finished) return (score.passed ? "Đạt" : "Không đạt") + " · Đúng " + score.correct + " · Sai " + score.wrong;
+    if (score.done) return "Đúng " + score.correct + " · Sai " + score.wrong;
+    const chosen = Object.keys(picks).filter((id) => picks[id].picked && !picks[id].revealed).length;
+    if (chosen) return "Đã chọn " + chosen + "/" + score.total;
+    return "Chưa làm";
+  }
+
+  function syncSetResult() {
+    if (!state.study || state.study.kind !== "set") return;
+    const extra = String(state.study.extra);
+    const picks = {};
+    state.study.ids.forEach((id) => {
+      if (state.study.picks[id]) picks[id] = choiceOf(state.study.picks[id]);
+    });
+    const score = scoreSet(extra, picks);
+    store.sets[extra] = { picks: picks, at: Date.now() };
+    if (score.finished) {
+      state.study.graded = true;
+      state.study.summary = score;
+    }
+    saveStore();
+  }
+
   function openStudy(kind, extra, title) {
     clearInterval(clockTimer);
     const fresh = studyIds(kind, extra);
@@ -524,7 +614,15 @@
       ids = saved.ids.slice();
       if (saved.index >= 0 && saved.index < ids.length) index = saved.index;
     }
-    const picks = picksFor(ids);
+    let picks = picksFor(ids);
+    let graded = !!(same && saved.graded);
+    let summary = same && saved.summary ? saved.summary : null;
+    if (kind === "set") {
+      picks = setPicks(extra);
+      const score = scoreSet(extra, picks);
+      graded = score.finished;
+      summary = graded ? score : null;
+    }
     state.view = "study";
     state.query = same ? saved.query : "";
     state.study = {
@@ -535,8 +633,8 @@
       ids: ids,
       index: index,
       picks: picks,
-      graded: !!(same && saved.graded),
-      summary: same && saved.summary ? saved.summary : null,
+      graded: graded,
+      summary: summary,
     };
     render({ scroll: "top" });
   }
@@ -922,9 +1020,31 @@
       '<button data-act="mark-mode" data-mode="submit" class="' + (instant ? "" : "on") + '" aria-pressed="' + !instant + '">Chấm khi nộp</button></div>';
   }
 
+  function autoNextIcon() {
+    return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M6 6.2 14.5 12 6 17.8V6.2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
+      '<path d="M18 6.2v11.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+      '</svg>';
+  }
+
+  function resetIcon() {
+    return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M20.5 12a8.5 8.5 0 1 1-2.4-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+      '<path d="M20.5 4.5V9h-4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
+  }
+
+  function shuffleIcon() {
+    return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="m18 14 4 4-4 4M18 2l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="M2 18h1.97a4 4 0 0 0 3.3-1.7l.8-1.1M2 6h1.97a4 4 0 0 1 3.6 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+      '<path d="M22 18h-6.04a4 4 0 0 1-3.3-1.8l-.36-.45M22 6h-5.04a4 4 0 0 0-3.3 1.8l-5.32 7.4a4 4 0 0 1-3.3 1.8H2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+      '</svg>';
+  }
+
   function autoNextButton() {
     const on = !!store.autoNext;
-    return '<button class="btn' + (on ? " on" : "") + '" data-act="auto-next" aria-pressed="' + on + '" title="Chọn đúng khi đang chấm ngay thì sang câu sau">Tự sang khi đúng</button>';
+    return '<button class="btn icon-btn' + (on ? " on" : "") + '" data-act="auto-next" aria-pressed="' + on + '" aria-label="Tự sang khi đúng" title="Tự sang khi đúng">' + autoNextIcon() + '</button>';
   }
 
   function studyLiet(question) {
@@ -999,21 +1119,14 @@
   function setsHtml() {
     const cards = STUDY_SETS.map((ids, index) => {
       const n = index + 1;
-      let done = 0;
-      let correct = 0;
-      ids.forEach((id) => {
-        const choice = store.choices[id];
-        if (!choice || !choice.revealed || !choice.picked) return;
-        done += 1;
-        if (choice.picked === byId.get(id).correct_option) correct += 1;
-      });
-      const progress = done ? "Đúng " + correct + "/" + ids.length : "Chưa làm";
+      const score = scoreSet(n, setPicks(n));
+      const tone = score.finished ? (score.passed ? " pass" : " fail") : "";
       return '<button class="mode" data-act="study" data-kind="set" data-extra="' + n + '">' +
-        '<strong>Đề ' + n + '</strong><em>' + ids.length + ' câu · 3 câu liệt</em><em>' + progress + '</em></button>';
+        '<strong>Đề ' + n + '</strong><em>' + ids.length + ' câu · 3 câu liệt</em><em class="' + tone.trim() + '">' + setLabel(n) + '</em></button>';
     }).join("");
     return header() + '<main class="wrap main"><div class="dash">' +
       '<div class="dash-head"><div><h1>Ôn bộ đề</h1>' +
-      '<p class="lead">20 đề, mỗi đề 30 câu, không câu nào lặp lại. Gộp đủ 600 câu. Mỗi đề có cả 6 chương và 3 câu điểm liệt.</p></div>' +
+      '<p class="lead">20 đề, mỗi đề 30 câu, không câu nào lặp lại. Câu chỉ hiện đúng hoặc sai sau khi làm trong đề đó. Đạt khi đúng từ 27/30 và không sai câu điểm liệt.</p></div>' +
       '<button class="btn" data-act="home">Về tổng quan</button></div>' +
       '<section class="card panel"><div class="grid modes">' + cards + '</div></section></div></main>';
   }
@@ -1045,11 +1158,18 @@
     const retryWrong = (state.study.kind === "wrong" || state.study.key === "wrong-retry" || graded) && missed.length
       ? '<button class="btn" data-act="retry-wrong">Làm lại các câu sai</button>'
       : "";
-    const summary = state.study.summary
-      ? '<div class="banner"><div><strong>Đúng ' + state.study.summary.correct + '/' + state.study.summary.total + '</strong>' +
+    let summary = "";
+    if (state.study.summary && state.study.kind === "set" && state.study.summary.passed != null) {
+      const result = state.study.summary;
+      summary = '<div class="banner"><div><strong>' + (result.passed ? "Đạt" : "Không đạt") + '</strong>' +
+        '<div class="meta">Đúng ' + result.correct + ' · Sai ' + result.wrong + ' / ' + result.total + '. ' +
+        (result.lietWrong ? "Sai câu điểm liệt." : "Không sai câu điểm liệt.") + '</div></div>' +
+        '<div class="row"><button class="btn" data-act="retry-study">Làm lại</button></div></div>';
+    } else if (state.study.summary) {
+      summary = '<div class="banner"><div><strong>Đúng ' + state.study.summary.correct + '/' + state.study.summary.total + '</strong>' +
         '<div class="meta">' + (state.study.summary.lietWrong ? "Có câu điểm liệt bị sai hoặc bỏ trống." : "Không sai câu điểm liệt.") + '</div></div>' +
-        '<div class="row"><button class="btn" data-act="retry-study">Làm lại</button>' + retryWrong + '</div></div>'
-      : "";
+        '<div class="row"><button class="btn" data-act="retry-study">Làm lại</button>' + retryWrong + '</div></div>';
+    }
     const sideMeta = waiting
       ? pickedCount + "/" + state.study.ids.length + " đã chọn"
       : ids.length + " câu";
@@ -1063,13 +1183,15 @@
     return header() + '<main class="wrap main"><div class="row toolbar">' +
       '<strong>' + esc(state.study.title) + '</strong>' +
       '<span class="meta">' + (empty ? "0 câu" : (state.study.index + 1) + " / " + ids.length) + '</span>' +
+      '<div class="toolbar-actions">' +
       markModeSwitch() +
       autoNextButton() +
       (state.study.kind === "all" ? '<button class="btn" data-act="answers">Hiện toàn bộ đáp án</button>' : '') +
       (state.study.kind === "set" ? '<button class="btn" data-act="sets">20 bộ đề</button>' : '') +
-      (state.study.kind === "critical" ? '<button class="btn" data-act="reset-critical">Reset</button>' : '') +
+      (state.study.kind === "critical" ? '<button class="btn icon-btn" data-act="reset-critical" aria-label="Reset" title="Reset">' + resetIcon() + '</button>' : '') +
       (state.study.summary ? "" : retryWrong) +
-      '<button class="btn" data-act="shuffle"' + (graded ? " disabled" : "") + '>Xáo trộn</button></div>' +
+      '<button class="btn icon-btn" data-act="shuffle"' + (graded ? " disabled" : "") + ' aria-label="Xáo trộn" title="Xáo trộn">' + shuffleIcon() + '</button>' +
+      '</div></div>' +
       keyTip() +
       summary +
       '<div class="layout with-side">' + card + side + '</div></main>';
@@ -1094,7 +1216,8 @@
     }).join("");
     const blank = exam.picked.filter((value) => !value).length;
     return header() + '<main class="wrap main"><div class="row toolbar"><strong>' + esc(cfg.name) + '</strong>' +
-      '<span class="meta">Câu ' + (exam.index + 1) + '/' + cfg.count + '</span>' + markModeSwitch() + autoNextButton() + '</div>' +
+      '<span class="meta">Câu ' + (exam.index + 1) + '/' + cfg.count + '</span>' +
+      '<div class="toolbar-actions">' + markModeSwitch() + autoNextButton() + '</div></div>' +
       keyTip() +
       '<div class="layout with-side"><article class="qcard' + (lietHere ? " liet" : "") + '">' +
       questionBody(question, exam.picked[exam.index], revealedHere, lietHere) +
@@ -1400,6 +1523,7 @@
     store.misses = {};
     store.practiced = {};
     store.choices = {};
+    store.sets = {};
     store.exams = [];
     store.saved = new Set();
     saveStore();
@@ -1434,6 +1558,7 @@
     const next = Object.assign({}, prev, patch);
     state.study.picks[question.id] = next;
     rememberChoice(question.id, next);
+    syncSetResult();
   }
 
   function rememberExamAnswer(index) {
@@ -1561,7 +1686,8 @@
     state.study.graded = true;
     state.study.summary = { correct, total: ids.length, lietWrong };
     state.query = "";
-    saveStore();
+    if (state.study.kind === "set") syncSetResult();
+    else saveStore();
     render({ scroll: "top" });
   }
 
@@ -1716,7 +1842,8 @@
     }
     if (act === "grade-study") { gradeStudy(); return; }
     if (act === "retry-study" && state.study) {
-      state.study.ids.forEach((id) => { delete store.choices[id]; });
+      if (state.study.kind === "set") delete store.sets[String(state.study.extra)];
+      else state.study.ids.forEach((id) => { delete store.choices[id]; });
       saveStore();
       state.study.picks = {};
       state.study.graded = false;
@@ -1868,7 +1995,12 @@
             saved.index = 0;
           }
         }
-        saved.picks = picksFor(saved.ids);
+        if (saved.kind === "set") {
+          saved.picks = setPicks(saved.extra);
+          const score = scoreSet(saved.extra, saved.picks);
+          saved.graded = score.finished;
+          saved.summary = score.finished ? score : null;
+        } else saved.picks = picksFor(saved.ids);
         state.study = saved;
         state.query = saved.query || "";
         state.view = "study";
