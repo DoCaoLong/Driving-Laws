@@ -1979,7 +1979,7 @@
   }
 
   function keyTip() {
-    return '<p class="key-tip">Mẹo: <kbd>←</kbd> <kbd>→</kbd> chuyển câu, <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> chọn đáp án</p>';
+    return '<p class="key-tip">Mẹo: <kbd>←</kbd> <kbd>→</kbd> hoặc <kbd>Space</kbd> chuyển câu, <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> chọn đáp án</p>';
   }
 
   function onKey(event) {
@@ -2002,9 +2002,9 @@
     if (event.key >= "1" && event.key <= "4") {
       event.preventDefault();
       choose(Number(event.key));
-    } else if (event.key === "ArrowRight") {
+    } else if (event.key === "ArrowRight" || event.key === " ") {
       event.preventDefault();
-      move(1);
+      if (event.key !== " " || !event.repeat) move(1);
     } else if (event.key === "ArrowLeft") {
       event.preventDefault();
       move(-1);
